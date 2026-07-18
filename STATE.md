@@ -26,12 +26,55 @@ metrics workflow and Pages dashboard` · live soak · `test: complete coverage t
 
 ## Status
 
-- [x] Day A: scaffold package + tooling + CI skeleton
-- [ ] Day A: compose stack (dev + bench)
-- [ ] Day A: exchange ingesters + normalization (raw ticks flowing)
-- [ ] Day A: capture + sanity commands
-- [ ] §0 feed-sanity gate reviewed → ADR-001
+- [x] Day A: scaffold package + tooling + CI skeleton — ruff/mypy/pytest green, coverage gate
+  wired (core-only), CI skeleton (lint→type→test) + disabled integration lane.
+- [x] Day A: compose stack (dev + bench) — single-node Redpanda + Schema Registry, brought up
+  and health-verified locally on the `dev` profile.
+- [x] Day A: exchange ingesters + normalization — Coinbase (primary) + Kraken normalized to
+  trades.v1, idempotent producer to `trades.raw`, reconnect/backoff. **Raw ticks verified
+  flowing end to end**: a 25s live run produced 322 records (316 Coinbase + 6 Kraken), counts
+  matching exactly with zero loss.
+- [ ] Day A: capture + sanity commands  ← **NEXT**
+- [ ] §0 feed-sanity gate reviewed → ADR-001 (BLOCKING before any gate logic)
 
-## Next
+## What Day B does next
 
-Day A continues: docker-compose Redpanda stack, then the ingesters.
+Day A is not fully closed: the remaining `feat: add capture and sanity commands` and the
+blocking §0 feed-sanity gate come first, then Day B proper. Precisely, in order:
+
+1. **Finish Day A — capture + sanity commands.** `tickflow capture --minutes 5` writes a
+   local (gitignored) capture from both live feeds; `tickflow sanity` prints, for the
+   2 exchanges × 2 symbols: message counts, 5 raw→normalized field-mapping pairs per feed,
+   timestamp sanity (event-time within ±60 s of wall clock, monotone-ish), and trade_id
+   presence/uniqueness stats.
+2. **§0 feed-sanity gate (blocking, manual).** Rishik reviews the sanity output. Gate: both
+   feeds connect keylessly and all 4 streams produce ≥ 50 messages in 5 min with field mapping
+   verified correct → proceed. Any feed failing → STOP and re-scope by ADR first. Record the
+   result as **ADR-001** in `docs/decisions.md` (currently PENDING).
+3. **Day B commit 1 — `feat: add trades.v1 contract with schema registry wiring`.** Add
+   `contracts/trades.v1.avsc`, register subject `trades.raw-value` in Redpanda's Schema
+   Registry with **BACKWARD** compatibility (CI check), and switch the ingester's on-wire
+   encoding from JSON to Avro (record shape unchanged).
+4. **Day B commit 2 — `feat: add declarative rules engine with quarantine routing`** (+ gate
+   unit tests). Implement the 6 frozen rules from `contracts/rules.yaml` (R1 schema, R2 range,
+   R3 duplicate/LRU-10k, R4 out-of-order vs per-stream watermark, R5 gap alert-only, R6
+   divergence alert-only), the gate consumer (at-least-once, manual commits) routing to
+   `trades.valid` / `trades.quarantine` (envelope: rule_id, detail, offset, ts, raw bytes),
+   evaluating against the per-stream **event-time watermark**, never wall clock. Table-driven
+   verdict tests including boundary literals (5.0 s vs 5.001 s skew, LRU eviction at exactly
+   10,000, range edges) and watermark determinism.
+5. **Day B commit 3 — `feat: add synthetic fixture generator and fault injector`** (+
+   determinism tests). `fixture.py`: seeded (42) 4 streams × 25,000 = 100,000 clean messages
+   as zstd parquet, SHA-256 pinned in `fixtures.yaml`; seeded fault injector producing the
+   faulted stream + injection manifest (exact counts/ids per fault class, with boundary
+   controls). Seeded-determinism tests (same seed → same checksum; manifest counts match).
+
+Then continue with Day C per the commit arc above.
+
+## Local environment notes
+
+- Redpanda `dev` profile may still be running from Day A verification:
+  `docker compose --profile dev up -d` / `... down -v`. Kafka on `localhost:19092`, Schema
+  Registry on `localhost:18081`.
+- `trades.raw` was created with 4 partitions during verification; Day B formalizes topic
+  provisioning alongside the contract.
