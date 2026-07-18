@@ -1,0 +1,66 @@
+[project]
+name = "tickflow"
+version = "0.1.0.dev0"
+description = "Quality-gate and contract-enforcement layer for Kafka-compatible streams: declarative per-topic contracts enforced inline, violations quarantined, every quality claim measured by seeded fault-injection replay in CI."
+readme = "README.md"
+requires-python = ">=3.12"
+license = { file = "LICENSE" }
+authors = [{ name = "Rishik Kasula", email = "contact.rishikkasula@gmail.com" }]
+dependencies = [
+    "confluent-kafka>=2.5",
+    "fastavro>=1.9",
+    "websockets>=13.0",
+    "duckdb>=1.1",
+    "pandas>=2.0",
+    "pyarrow>=16.0",
+    "pyyaml>=6.0",
+    "scipy>=1.13",
+]
+
+[project.scripts]
+tickflow = "tickflow.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+    "ruff>=0.6",
+    "mypy>=1.11",
+    "pre-commit>=3.8",
+    "types-pyyaml>=6.0",
+    "pandas-stubs>=2.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["src"]
+
+[[tool.mypy.overrides]]
+module = ["confluent_kafka.*", "fastavro.*", "duckdb.*", "scipy.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--cov=tickflow --cov-report=term-missing"
+
+[tool.coverage.run]
+source = ["src/tickflow"]
+# Core logic is coverage-gated (gate, fixture/injector, metrics, export — §9).
+# CLI and ingester glue are excluded per the frozen spec.
+omit = ["src/tickflow/cli.py", "src/tickflow/ingest.py"]
+
+[tool.coverage.report]
+fail_under = 85
+exclude_also = ["if TYPE_CHECKING:", "# pragma: no cover"]

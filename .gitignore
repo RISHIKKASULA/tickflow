@@ -1,0 +1,21 @@
+# captured market data & run artifacts (NEVER committed — Coinbase/Kraken ToS, §1)
+data/
+captures/
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+dist/
+build/
+
+# tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# OS
+.DS_Store

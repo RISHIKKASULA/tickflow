@@ -1,0 +1,38 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - name: Install
+        run: uv sync
+      - name: Lint
+        run: |
+          uv run ruff check .
+          uv run ruff format --check .
+      - name: Type-check
+        run: uv run mypy
+      - name: Test
+        run: uv run pytest
+
+  # Integration lane: end-to-end replay against a real single-node Redpanda,
+  # wired up as source logic lands (§10). Skeleton only on Day A.
+  integration:
+    runs-on: ubuntu-latest
+    if: false # enabled once the gate + replay path exist (Day C)
+    services:
+      redpanda:
+        image: redpandadata/redpanda:v24.2.7
+    steps:
+      - uses: actions/checkout@v4
+      - run: echo "integration lane placeholder"
