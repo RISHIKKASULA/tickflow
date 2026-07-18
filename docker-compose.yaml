@@ -1,0 +1,88 @@
+# Single-node Redpanda broker + built-in Schema Registry for tickflow (frozen design §3).
+# Native ARM64 image. Two profiles, and you run exactly one at a time:
+#
+#   dev   — `--mode dev-container --smp 1 --memory 1G`. Functional work only. Redpanda's docs
+#           note this mode bypasses fsync, "which results in unrealistically fast clusters."
+#           Numbers from this profile are NEVER published. Anywhere.
+#   bench — fsync-safe: dev-container OFF (production mode, which fsyncs) with write caching
+#           explicitly disabled. This is the ONLY profile CI publishes metrics from; the
+#           profile name is recorded in every metrics artifact.
+#
+# Both expose the same host ports (only one runs at a time):
+#   Kafka API        -> localhost:19092
+#   Schema Registry  -> localhost:18081
+#   Admin API        -> localhost:19644
+#
+# Usage:
+#   docker compose --profile dev   up -d
+#   docker compose --profile bench up -d
+#   docker compose --profile dev   down -v
+
+x-redpanda-image: &redpanda-image redpandadata/redpanda:v24.2.7
+
+services:
+  redpanda-dev:
+    profiles: ["dev"]
+    image: *redpanda-image
+    container_name: tickflow-redpanda-dev
+    command:
+      - redpanda
+      - start
+      - --mode=dev-container
+      - --smp=1
+      - --memory=1G
+      - --reserve-memory=0M
+      - --default-log-level=info
+      - --kafka-addr=internal://0.0.0.0:9092,external://0.0.0.0:19092
+      - --advertise-kafka-addr=internal://redpanda-dev:9092,external://localhost:19092
+      - --schema-registry-addr=internal://0.0.0.0:8081,external://0.0.0.0:18081
+      - --rpc-addr=redpanda-dev:33145
+      - --advertise-rpc-addr=redpanda-dev:33145
+    ports:
+      - "19092:19092"
+      - "18081:18081"
+      - "19644:9644"
+    volumes:
+      - redpanda-dev:/var/lib/redpanda/data
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster health --exit-when-healthy | grep -q 'Healthy:.*true'"]
+      interval: 5s
+      timeout: 10s
+      retries: 20
+      start_period: 5s
+
+  redpanda-bench:
+    profiles: ["bench"]
+    image: *redpanda-image
+    container_name: tickflow-redpanda-bench
+    # Production mode (no --mode dev-container) => fsync on every append. Write caching is
+    # disabled explicitly so nothing relaxes that guarantee. This is the fsync-safe profile.
+    command:
+      - redpanda
+      - start
+      - --smp=1
+      - --memory=1G
+      - --reserve-memory=0M
+      - --default-log-level=info
+      - --set=redpanda.write_caching_default=false
+      - --kafka-addr=internal://0.0.0.0:9092,external://0.0.0.0:19092
+      - --advertise-kafka-addr=internal://redpanda-bench:9092,external://localhost:19092
+      - --schema-registry-addr=internal://0.0.0.0:8081,external://0.0.0.0:18081
+      - --rpc-addr=redpanda-bench:33145
+      - --advertise-rpc-addr=redpanda-bench:33145
+    ports:
+      - "19092:19092"
+      - "18081:18081"
+      - "19644:9644"
+    volumes:
+      - redpanda-bench:/var/lib/redpanda/data
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster health --exit-when-healthy | grep -q 'Healthy:.*true'"]
+      interval: 5s
+      timeout: 10s
+      retries: 20
+      start_period: 5s
+
+volumes:
+  redpanda-dev:
+  redpanda-bench:
