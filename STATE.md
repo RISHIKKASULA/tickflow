@@ -38,50 +38,43 @@ metrics workflow and Pages dashboard` · live soak · `test: complete coverage t
   (gitignored) checksummed capture from both live feeds; `tickflow sanity` reports per-stream
   counts, raw→normalized field-mapping pairs, timestamp/skew sanity, and trade_id uniqueness,
   with a provisional gate verdict. Pure helpers unit-tested; feed I/O is coverage-excluded (§9).
-- [ ] §0 feed-sanity gate — **RUN 2026-07-19; provisional FAIL, awaiting manual review →
-  ADR-001** (BLOCKING before any gate logic). See the gate result below.
+- [x] §0 feed-sanity gate — **RUN 2026-07-19; PASSES on recalibrated per-venue thresholds.**
+  Reviewed by Rishik; recorded as **ADR-001 (ACCEPTED)**. Day A closed; Day B unblocked. See
+  the gate result below.
 
-## Feed-sanity gate result — RUN 2026-07-19 (provisional FAIL, awaiting review)
+## Feed-sanity gate result — RUN 2026-07-19 (PASS on recalibrated terms; ADR-001)
 
 Capture: `data/captures/gate-2026-07-19` (local, gitignored; ToS §1), sha256
-`5be3cde5e281be05…`, 300.1 s, 1060 records. Command: `tickflow sanity --capture <dir>`.
+`5be3cde5e281be05…`, 300.1 s, 1060 records. Command: `tickflow sanity --capture <dir>`. Verdict
+under per-venue liveness thresholds (ADR-001: coinbase ≥ 50, kraken ≥ 5):
 
-| stream | count | ≥50? | uniq_id | dup | missing | max skew | within 60s | ooo |
-|---|---|---|---|---|---|---|---|---|
-| coinbase:BTC-USD | 814 | **PASS** | 814 | 0 | 0 | 37.7 s | 814 | 163 |
-| coinbase:ETH-USD | 203 | **PASS** | 203 | 0 | 0 | 134.9 s | 150 | 110 |
-| kraken:BTC-USD | 29 | **FAIL** | 29 | 0 | 0 | 0.2 s | 29 | 0 |
-| kraken:ETH-USD | 14 | **FAIL** | 14 | 0 | 0 | 0.1 s | 14 | 0 |
+| stream | count | min | verdict | uniq_id | dup | missing | max skew | within 60s | ooo |
+|---|---|---|---|---|---|---|---|---|---|
+| coinbase:BTC-USD | 814 | 50 | **PASS** | 814 | 0 | 0 | 37.7 s | 814 | 163 |
+| coinbase:ETH-USD | 203 | 50 | **PASS** | 203 | 0 | 0 | 134.9 s | 150 | 110 |
+| kraken:BTC-USD | 29 | 5 | **PASS** | 29 | 0 | 0 | 0.2 s | 29 | 0 |
+| kraken:ETH-USD | 14 | 5 | **PASS** | 14 | 0 | 0 | 0.1 s | 14 | 0 |
 
-**What passes:** both feeds connect keylessly, no keys/account. Field mapping verified correct
-by eye on all 4 streams (Kraken `qty`→`size`, `BTC/USD`→`BTC-USD`, int `trade_id`→str, ISO
-`timestamp`→ms; Coinbase `product_id`→`symbol`, `BUY`→`buy`, `time`→ms). trade_id 100% present,
-0 duplicates, 0 missing on every stream. Kraken event-time sits within ~0.2 s of wall clock.
+Both feeds connect keylessly. Field mapping verified correct on all 4 streams (Kraken
+`qty`→`size`, `BTC/USD`→`BTC-USD`, int `trade_id`→str, ISO `timestamp`→ms; Coinbase
+`product_id`→`symbol`, `BUY`→`buy`, `time`→ms). trade_id 100% present, 0 duplicates, 0 missing
+on every stream; Kraken event-time within ~0.2 s of wall clock.
 
-**What fails:** both **Kraken** streams fall below the frozen 50-msg/5-min threshold (29 and
-14). Coinbase is abundant. The large Coinbase skew/ooo is **not** feed lag — it is the
-connect-time **snapshot backfill** (Coinbase replays recent trades on subscribe); steady-state
-Coinbase updates are within tolerance, and it clears the gate regardless.
-
-**Verdict:** provisional **FAIL** on Kraken throughput alone. Everything else (connectivity,
-field mapping, uniqueness) passes. Per §0 this means **STOP and re-scope by ADR before any gate
-logic** — do not build the contract layer on a feed that can't sustain the window.
-
-**Awaiting Rishik's manual review + re-scope decision → recorded as ADR-001 (still PENDING).**
-Candidate re-scope paths for that decision (not yet chosen): (a) Coinbase-only for v0.1 — drops
-the cross-venue divergence rule R6, which needs two venues; (b) keep Kraken but recalibrate the
-gate for its genuinely lower volume (longer window and/or a per-venue threshold — 29+14 is real,
-sparse data, not a broken feed); (c) swap Kraken for a checked higher-volume alternate to
-preserve the two-venue / R6 story. ADR-001 records the choice and its scope consequences.
+**Recalibration (ADR-001, path b).** The original single 50-msg threshold wrongly assumed
+comparable volume across venues. Kraken is genuinely thinner (29/14 is real sparse activity, not
+a broken feed — uniqueness/mapping/skew all clean), so the gate now uses per-venue liveness
+floors derived from observed volume, and it PASSES on its own terms. ADR-001 also settles two
+carry-forwards: R6 divergence gets a **30 s staleness window** (skip + telemetry when a venue has
+no recent print, never quarantine), and the large **Coinbase skew/ooo is the connect-time
+snapshot backfill**, not feed lag. Full reasoning in [docs/decisions.md](docs/decisions.md#adr-001).
 
 ## What Day B does next
 
-**Day B is BLOCKED** until the gate above is confirmed PASS or re-scoped in ADR-001. No
-contract/rules/fixture work begins until then (frozen §0: the gate is binding). Once ADR-001
-records the decision, resume from the first unchecked item below; a re-scope may amend it (e.g.
-Coinbase-only drops R6 from the Day B rules engine and the divergence path throughout).
+Day A is closed and the gate is PASS (ADR-001). Day B proceeds; **NEXT = commit 1** below. Watch
+one carry-forward from ADR-001: the rules engine (commit 2) must implement R6's 30 s staleness
+window and stale→telemetry (not quarantine) behavior for the sparse second venue.
 
-1. **Day B commit 1 — `feat: add trades.v1 contract with schema registry wiring`.** Add
+1. **Day B commit 1 — `feat: add trades.v1 contract with schema registry wiring`.** ← **NEXT** Add
    `contracts/trades.v1.avsc`, register subject `trades.raw-value` in Redpanda's Schema
    Registry with **BACKWARD** compatibility (CI check), and switch the ingester's on-wire
    encoding from JSON to Avro (record shape unchanged).
