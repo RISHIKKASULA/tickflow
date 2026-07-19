@@ -59,7 +59,20 @@ metrics workflow and Pages dashboard` · live soak · `test: complete coverage t
   sustain), quarantine routing/envelopes, and replay-twice bit-identity. **gate.py 100% covered;
   ruff/mypy/pytest green (89 gate tests).** The Kafka consumer glue is integration-lane (no broker
   on the M4 this session).
-- [ ] Day B commit 3: synthetic fixture generator and fault injector  ← **NEXT**
+- [x] Day B commit 3: synthetic fixture generator and fault injector — `src/tickflow/fixture.py`,
+  `fixtures.yaml`, and the committed `fixtures/trades.v1.clean.parquet` (2.9 MB). Seeded (42),
+  integer-driven, cross-platform-deterministic clean generator: 4 streams × 25,000 = 100,000
+  `trades.v1` messages, pinned by a platform-independent **content digest** (+ the parquet byte
+  sha) that `tickflow fixture verify` checks — CI's system of record. Seeded fault injector
+  rewrites ~2% into the four quarantine-rule classes (`malformed`→R1, `out-of-range`→R2,
+  `duplicate`→R3, `out-of-order`→R4) and emits an **injection manifest** (per-entry index, class,
+  expected verdict, boundary label, detectable flag). **Boundary faults are deliberate**: inclusive
+  range-bound controls, 4.9 s / 5.0 s / 5.1 s skews, and the exact dedup-window edge (lru−1 keys
+  back → caught vs lru back → designed miss). Tests cross-check the manifest against the **real**
+  `RulesEngine`: every fault caught by its rule, every control valid, every designed-miss valid,
+  zero false-quarantine on clean; generator + injection determinism proven. **fixture.py 100%
+  covered; ruff/mypy/pytest green (118 tests total).**
+- **Day B COMPLETE.** Next work is Day C commit 1 (barbuilder + SLO + DuckDB).
 
 ## Feed-sanity gate result — RUN 2026-07-19 (PASS on recalibrated terms; ADR-001)
 
@@ -87,35 +100,31 @@ carry-forwards: R6 divergence gets a **30 s staleness window** (skip + telemetry
 no recent print, never quarantine), and the large **Coinbase skew/ooo is the connect-time
 snapshot backfill**, not feed lag. Full reasoning in [docs/decisions.md](docs/decisions.md#adr-001).
 
-## What Day B does next
+## Day B — COMPLETE
 
-Day A is closed and the gate is PASS (ADR-001). Commits 1 (contract + registry wiring) and 2
-(rules engine + quarantine routing) are **DONE**. **NEXT = Day B commit 3.** The gate exists and
-is the anchor everything downstream is graded against: it decodes with `contracts.decode` (a
-raised decode error is R1 `malformed`), evaluates R3–R6 on the per-stream event-time watermark
-(never wall clock), quarantines R1–R4 to `trades.quarantine`, and alerts (never quarantines) on
-R5/R6 — R6 with the ADR-001 30 s staleness window.
+All three Day B commits are done and the whole toolchain is green (ruff/mypy/pytest, 118 tests,
+core coverage 100%):
 
-1. **Day B commit 1 — DONE.** `contracts/trades.v1.avsc` + `contracts.py` (Avro wire codec,
+1. **Commit 1 — DONE.** `contracts/trades.v1.avsc` + `contracts.py` (Avro wire codec,
    `SchemaRegistry`, `ensure_registered`), `tickflow contract` (register/check/show), ingester
-   switched to Avro, BACKWARD-compat CI job. The live register/check runs in CI (needs a broker).
-2. **Day B commit 2 — DONE.** `contracts/rules.yaml` + `src/tickflow/gate.py`: declarative
+   switched to Avro, BACKWARD-compat CI job.
+2. **Commit 2 — DONE.** `contracts/rules.yaml` + `src/tickflow/gate.py`: declarative
    `RulesConfig`/`RulesEngine` (all 6 rules, thresholds read from YAML), `QuarantineEnvelope`
    (rule_id, detail, offset, ts, raw bytes; idempotent key), `verdicts_digest` bit-identity check,
-   and the `tickflow gate` at-least-once/manual-commit consumer (integration-lane glue). gate.py
-   100% covered; 89 gate tests; ruff/mypy green.
-3. **Day B commit 3 — `feat: add synthetic fixture generator and fault injector`** (+  ← **NEXT**
-   determinism tests). `fixture.py`: seeded (42) 4 streams × 25,000 = 100,000 clean messages
-   as zstd parquet, SHA-256 pinned in `fixtures.yaml`; seeded fault injector producing the
-   faulted stream + injection manifest (exact counts/ids per fault class, with boundary
-   controls). Seeded-determinism tests (same seed → same checksum; manifest counts match). The
-   injector's fault classes map 1:1 to the gate rules just built — `malformed`→R1,
-   `out-of-range`→R2 (with just-inside controls), `duplicate`→R3 (immediate dups AND dups
-   re-injected beyond the 10,000 LRU window as designed misses), `out-of-order`→R4 (4.9 s
-   controls vs 5.1 s faults straddling the tolerance) — so the manifest is the ground truth the
-   gate is graded against on Day C.
+   `evaluate_all`, and the `tickflow gate` at-least-once/manual-commit consumer (integration-lane).
+3. **Commit 3 — DONE.** `src/tickflow/fixture.py` + `fixtures.yaml` + committed
+   `fixtures/trades.v1.clean.parquet`: seeded deterministic 100,000-message clean fixture (content
+   digest pinned), and a seeded fault injector + injection manifest whose expected verdicts are
+   cross-checked against the real `RulesEngine`. `tickflow fixture generate/verify`.
 
-## What Day C does next
+**The Day C substrate now exists**: `fixture.generate_clean()` → clean records; `fixture.flatten`
++ `contracts.encode` → clean frames; `fixture.inject_faults(clean, config, schema)` →
+`InjectionResult(frames, manifest)`. The manifest's `entries` (index, class, `is_fault`,
+`detectable`, `expected_disposition`, `expected_rule`, `boundary`) are the ground truth for
+grading; `by_index()`, `counts_by_class()`, `fault_rate()`, `to_json()`/`digest()` are ready for
+the metrics code. `fixture.verify_fixture()` is the CI checksum gate.
+
+## What Day C does next  ← **NEXT**
 
 Day C turns the gate into measured evidence (frozen §4/§6, commit arc §11). In order:
 
@@ -128,12 +137,23 @@ Day C turns the gate into measured evidence (frozen §4/§6, commit arc §11). I
    routing everything to valid. The signature experiment: replay the fault-injected fixture (from
    commit 3) twice. Gates ON → bars **bit-identical** to clean-fixture bars, zero SLO violations;
    gates OFF → the SLO checker counts K violated bars. The ON/OFF table is the README's opening
-   evidence.
+   evidence. **⚠ Carry-forward the injector forces you to resolve here:** the `duplicate` class
+   includes *designed misses* (dups past the LRU window, manifest `detectable=False`) that the
+   gate legitimately cannot catch, so they route valid **even with gates ON** — meaning raw
+   gates-ON bars will NOT be bit-identical to clean-fixture bars. Resolve deliberately, e.g. run
+   the §4 bit-identity experiment on the *catchable* fault subset (filter the injected stream to
+   `is_fault → detectable`, keeping all controls), and report the designed-miss dups separately as
+   the R3 recall gap (§6). The manifest's `detectable`/`expected_disposition` fields exist for
+   exactly this split. Do NOT "fix" it by deleting the designed misses — they are the frozen §5
+   point that keeps recall honest.
 3. **`feat: add fault-injection grading with bootstrap CIs`** — `metrics.py` grades gate output
-   against the injection manifest: detection recall/precision per fault class, false-quarantine
-   rate on clean controls, completeness (every input accounted for exactly once across
-   valid+quarantine). Every proportion carries a bootstrap 95% CI (B=10,000, seed 42, percentile
-   intervals); report format `point [lo, hi]`.
+   against the injection manifest: for each entry compare the gate verdict at `entry.index` to
+   `expected_disposition`/`expected_rule`; detection recall/precision **per fault class** (recall
+   denominator = `is_fault` entries, so designed misses correctly drag R3 recall below 100%),
+   false-quarantine rate on `is_fault=False` controls + untouched clean (`n_clean_controls`),
+   completeness (every input accounted for exactly once across valid+quarantine). `manifest.by_index()`
+   and `counts_by_class()` are the grading handles. Every proportion carries a bootstrap 95% CI
+   (B=10,000, seed 42, percentile intervals); report format `point [lo, hi]`.
 4. **`feat: add quarantine inspection and replay CLI`** — `quarantine.py`: `tickflow quarantine`
    ls/show/stats over the envelopes this commit's gate emits, plus `tickflow replay --fixture`.
    Then replay-determinism + completeness (kill/restart mid-replay → exactly-once accounting)
