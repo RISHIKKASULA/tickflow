@@ -47,8 +47,19 @@ metrics workflow and Pages dashboard` · live soak · `test: complete coverage t
   (register/check/show), the ingester switched from JSON to Avro, and a **BACKWARD-compat CI
   job**. Codec unit-tested (contracts.py 100%); registry/E2E is integration-lane (no broker on
   the M4 this session — `docker` unavailable, so the live register/check is CI-verified).
-- [ ] Day B commit 2: declarative rules engine with quarantine routing  ← **NEXT**
-- [ ] Day B commit 3: synthetic fixture generator and fault injector
+- [x] Day B commit 2: declarative rules engine with quarantine routing — `contracts/rules.yaml`
+  (the 6 frozen rules, declarative: every threshold/bound/disposition read from YAML) +
+  `src/tickflow/gate.py` (`RulesEngine` + quarantine envelope + `tickflow gate` consumer). R1–R4
+  quarantine to `trades.quarantine`; R5 gap and R6 divergence are **alert-only** and structurally
+  cannot quarantine (the config loader rejects any YAML that tries). Everything evaluates on the
+  **per-stream event-time watermark**, never wall clock; R6 honors the ADR-001 **30 s staleness
+  window** (no verdict + `divergence_unavailable{reason=stale_<venue>}` telemetry on a stale
+  venue). Table-driven verdict tests cover each rule's pass/fail, the boundary literals (5.0 s vs
+  5.001 s skew, LRU eviction at exactly 10,000, inclusive range edges, 0.5% deviation, 10 s
+  sustain), quarantine routing/envelopes, and replay-twice bit-identity. **gate.py 100% covered;
+  ruff/mypy/pytest green (89 gate tests).** The Kafka consumer glue is integration-lane (no broker
+  on the M4 this session).
+- [ ] Day B commit 3: synthetic fixture generator and fault injector  ← **NEXT**
 
 ## Feed-sanity gate result — RUN 2026-07-19 (PASS on recalibrated terms; ADR-001)
 
@@ -78,30 +89,59 @@ snapshot backfill**, not feed lag. Full reasoning in [docs/decisions.md](docs/de
 
 ## What Day B does next
 
-Day A is closed and the gate is PASS (ADR-001). Commit 1 (contract + registry wiring) is done;
-**NEXT = commit 2** below. Carry-forward from ADR-001 that commit 2 must honor: the rules engine
-implements R6's **30 s staleness window** and stale→telemetry (not quarantine) behavior for the
-sparse second venue. The gate consumer decodes with `contracts.decode` (a raised `ValueError`
-is R1 `malformed`), and evaluates against the per-stream event-time watermark, never wall clock.
+Day A is closed and the gate is PASS (ADR-001). Commits 1 (contract + registry wiring) and 2
+(rules engine + quarantine routing) are **DONE**. **NEXT = Day B commit 3.** The gate exists and
+is the anchor everything downstream is graded against: it decodes with `contracts.decode` (a
+raised decode error is R1 `malformed`), evaluates R3–R6 on the per-stream event-time watermark
+(never wall clock), quarantines R1–R4 to `trades.quarantine`, and alerts (never quarantines) on
+R5/R6 — R6 with the ADR-001 30 s staleness window.
 
 1. **Day B commit 1 — DONE.** `contracts/trades.v1.avsc` + `contracts.py` (Avro wire codec,
    `SchemaRegistry`, `ensure_registered`), `tickflow contract` (register/check/show), ingester
    switched to Avro, BACKWARD-compat CI job. The live register/check runs in CI (needs a broker).
-2. **Day B commit 2 — `feat: add declarative rules engine with quarantine routing`** (+ gate  ← **NEXT**
-   unit tests). Implement the 6 frozen rules from `contracts/rules.yaml` (R1 schema, R2 range,
-   R3 duplicate/LRU-10k, R4 out-of-order vs per-stream watermark, R5 gap alert-only, R6
-   divergence alert-only), the gate consumer (at-least-once, manual commits) routing to
-   `trades.valid` / `trades.quarantine` (envelope: rule_id, detail, offset, ts, raw bytes),
-   evaluating against the per-stream **event-time watermark**, never wall clock. Table-driven
-   verdict tests including boundary literals (5.0 s vs 5.001 s skew, LRU eviction at exactly
-   10,000, range edges) and watermark determinism.
-3. **Day B commit 3 — `feat: add synthetic fixture generator and fault injector`** (+
+2. **Day B commit 2 — DONE.** `contracts/rules.yaml` + `src/tickflow/gate.py`: declarative
+   `RulesConfig`/`RulesEngine` (all 6 rules, thresholds read from YAML), `QuarantineEnvelope`
+   (rule_id, detail, offset, ts, raw bytes; idempotent key), `verdicts_digest` bit-identity check,
+   and the `tickflow gate` at-least-once/manual-commit consumer (integration-lane glue). gate.py
+   100% covered; 89 gate tests; ruff/mypy green.
+3. **Day B commit 3 — `feat: add synthetic fixture generator and fault injector`** (+  ← **NEXT**
    determinism tests). `fixture.py`: seeded (42) 4 streams × 25,000 = 100,000 clean messages
    as zstd parquet, SHA-256 pinned in `fixtures.yaml`; seeded fault injector producing the
    faulted stream + injection manifest (exact counts/ids per fault class, with boundary
-   controls). Seeded-determinism tests (same seed → same checksum; manifest counts match).
+   controls). Seeded-determinism tests (same seed → same checksum; manifest counts match). The
+   injector's fault classes map 1:1 to the gate rules just built — `malformed`→R1,
+   `out-of-range`→R2 (with just-inside controls), `duplicate`→R3 (immediate dups AND dups
+   re-injected beyond the 10,000 LRU window as designed misses), `out-of-order`→R4 (4.9 s
+   controls vs 5.1 s faults straddling the tolerance) — so the manifest is the ground truth the
+   gate is graded against on Day C.
 
-Then continue with Day C per the commit arc above.
+## What Day C does next
+
+Day C turns the gate into measured evidence (frozen §4/§6, commit arc §11). In order:
+
+1. **`feat: add barbuilder with SLO checker and DuckDB sink`** — `bars.py` consumes
+   `trades.valid`, builds 1-minute OHLCV bars per (exchange, symbol), appends to DuckDB
+   (single-writer, append-only). SLO invariants: high ≥ low, high ≥ open/close ≥ low, volume > 0,
+   monotone bar timestamps, no bar built from a message the gate would quarantine. Bar values
+   never leave the local environment (§1 ToS).
+2. **`feat: add gates-off demo mode with SLO comparison`** — a first-class `--gates-off` flag
+   routing everything to valid. The signature experiment: replay the fault-injected fixture (from
+   commit 3) twice. Gates ON → bars **bit-identical** to clean-fixture bars, zero SLO violations;
+   gates OFF → the SLO checker counts K violated bars. The ON/OFF table is the README's opening
+   evidence.
+3. **`feat: add fault-injection grading with bootstrap CIs`** — `metrics.py` grades gate output
+   against the injection manifest: detection recall/precision per fault class, false-quarantine
+   rate on clean controls, completeness (every input accounted for exactly once across
+   valid+quarantine). Every proportion carries a bootstrap 95% CI (B=10,000, seed 42, percentile
+   intervals); report format `point [lo, hi]`.
+4. **`feat: add quarantine inspection and replay CLI`** — `quarantine.py`: `tickflow quarantine`
+   ls/show/stats over the envelopes this commit's gate emits, plus `tickflow replay --fixture`.
+   Then replay-determinism + completeness (kill/restart mid-replay → exactly-once accounting)
+   tests green. **Slip valve (§11):** if Day C overruns, v0.9 drops this quarantine-replay CLI and
+   the live-soak section — never the gate, the SLO experiment, or the CIs.
+
+Then Day D: telemetry export with schema enforcement, metrics workflow + Pages dashboard, live
+soak, coverage-to-gate, README with measured numbers, release grep gate, `chore: release v0.1.0`.
 
 ## Local environment notes
 
