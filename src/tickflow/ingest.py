@@ -83,10 +83,33 @@ class Feed(Protocol):
 
     def subscribe(self, symbols: Sequence[str]) -> str: ...
 
+    def iter_pairs(
+        self, message: Any, ts_ingest: int
+    ) -> Iterator[tuple[dict[str, Any], NormalizedTrade]]: ...
+
     def parse(self, message: Any, ts_ingest: int) -> Iterator[NormalizedTrade]: ...
 
 
-class CoinbaseFeed:
+class _FeedBase:
+    """Shared `parse` view over `iter_pairs`.
+
+    `parse` yields only the normalized trades (what the ingester produces); `iter_pairs` also
+    surfaces each originating venue sub-message, which the feed-sanity capture keeps so the gate
+    can show raw→normalized field-mapping pairs (§0). Both walk the same code path, so the
+    normalization the ingester ships is exactly the normalization the gate reviews.
+    """
+
+    def iter_pairs(
+        self, message: Any, ts_ingest: int
+    ) -> Iterator[tuple[dict[str, Any], NormalizedTrade]]:  # pragma: no cover - overridden
+        raise NotImplementedError
+
+    def parse(self, message: Any, ts_ingest: int) -> Iterator[NormalizedTrade]:
+        for _raw, trade in self.iter_pairs(message, ts_ingest):
+            yield trade
+
+
+class CoinbaseFeed(_FeedBase):
     name = "coinbase"
     url = "wss://advanced-trade-ws.coinbase.com"
 
@@ -95,24 +118,29 @@ class CoinbaseFeed:
             {"type": "subscribe", "product_ids": list(symbols), "channel": "market_trades"}
         )
 
-    def parse(self, message: Any, ts_ingest: int) -> Iterator[NormalizedTrade]:
+    def iter_pairs(
+        self, message: Any, ts_ingest: int
+    ) -> Iterator[tuple[dict[str, Any], NormalizedTrade]]:
         if message.get("channel") != "market_trades":
             return
         for event in message.get("events", []):
             for trade in event.get("trades", []):
-                yield NormalizedTrade(
-                    exchange=self.name,
-                    symbol=str(trade["product_id"]),
-                    trade_id=str(trade["trade_id"]),
-                    price=float(trade["price"]),
-                    size=float(trade["size"]),
-                    side=_normalize_side(str(trade["side"])),
-                    ts_event=_iso_to_millis(str(trade["time"])),
-                    ts_ingest=ts_ingest,
+                yield (
+                    trade,
+                    NormalizedTrade(
+                        exchange=self.name,
+                        symbol=str(trade["product_id"]),
+                        trade_id=str(trade["trade_id"]),
+                        price=float(trade["price"]),
+                        size=float(trade["size"]),
+                        side=_normalize_side(str(trade["side"])),
+                        ts_event=_iso_to_millis(str(trade["time"])),
+                        ts_ingest=ts_ingest,
+                    ),
                 )
 
 
-class KrakenFeed:
+class KrakenFeed(_FeedBase):
     name = "kraken"
     url = "wss://ws.kraken.com/v2"
     _TO_VENUE: ClassVar[dict[str, str]] = {"BTC-USD": "BTC/USD", "ETH-USD": "ETH/USD"}
@@ -122,19 +150,24 @@ class KrakenFeed:
         venue = [self._TO_VENUE.get(s, s) for s in symbols]
         return json.dumps({"method": "subscribe", "params": {"channel": "trade", "symbol": venue}})
 
-    def parse(self, message: Any, ts_ingest: int) -> Iterator[NormalizedTrade]:
+    def iter_pairs(
+        self, message: Any, ts_ingest: int
+    ) -> Iterator[tuple[dict[str, Any], NormalizedTrade]]:
         if message.get("channel") != "trade" or message.get("type") not in ("snapshot", "update"):
             return
         for trade in message.get("data", []):
-            yield NormalizedTrade(
-                exchange=self.name,
-                symbol=self._TO_CANON.get(str(trade["symbol"]), str(trade["symbol"])),
-                trade_id=str(trade["trade_id"]),
-                price=float(trade["price"]),
-                size=float(trade["qty"]),
-                side=_normalize_side(str(trade["side"])),
-                ts_event=_iso_to_millis(str(trade["timestamp"])),
-                ts_ingest=ts_ingest,
+            yield (
+                trade,
+                NormalizedTrade(
+                    exchange=self.name,
+                    symbol=self._TO_CANON.get(str(trade["symbol"]), str(trade["symbol"])),
+                    trade_id=str(trade["trade_id"]),
+                    price=float(trade["price"]),
+                    size=float(trade["qty"]),
+                    side=_normalize_side(str(trade["side"])),
+                    ts_event=_iso_to_millis(str(trade["timestamp"])),
+                    ts_ingest=ts_ingest,
+                ),
             )
 
 

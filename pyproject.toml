@@ -58,8 +58,13 @@ addopts = "--cov=tickflow --cov-report=term-missing"
 [tool.coverage.run]
 source = ["src/tickflow"]
 # Core logic is coverage-gated (gate, fixture/injector, metrics, export — §9).
-# CLI and ingester glue are excluded per the frozen spec.
-omit = ["src/tickflow/cli.py", "src/tickflow/ingest.py"]
+# CLI, ingester, and feed-sanity glue (capture/sanity) are excluded per the frozen spec.
+omit = [
+    "src/tickflow/cli.py",
+    "src/tickflow/ingest.py",
+    "src/tickflow/capture.py",
+    "src/tickflow/sanity.py",
+]
 
 [tool.coverage.report]
 fail_under = 85

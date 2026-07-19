@@ -10,7 +10,7 @@ from __future__ import annotations
 import argparse
 from collections.abc import Sequence
 
-from tickflow import __version__, ingest
+from tickflow import __version__, capture, ingest
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -21,6 +21,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action="version", version=f"tickflow {__version__}")
     subparsers = parser.add_subparsers(dest="command")
     ingest.register(subparsers)
+    capture.register(subparsers)
     return parser
 
 
