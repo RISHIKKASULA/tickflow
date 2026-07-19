@@ -41,6 +41,14 @@ metrics workflow and Pages dashboard` · live soak · `test: complete coverage t
 - [x] §0 feed-sanity gate — **RUN 2026-07-19; PASSES on recalibrated per-venue thresholds.**
   Reviewed by Rishik; recorded as **ADR-001 (ACCEPTED)**. Day A closed; Day B unblocked. See
   the gate result below.
+- [x] Day B commit 1: trades.v1 contract + Schema Registry wiring — `contracts/trades.v1.avsc`,
+  a hand-rolled Confluent Avro wire codec (magic + schema id + fastavro body, timestamps as
+  `timestamp-millis`, exact round-trip), a `SchemaRegistry` REST client + `tickflow contract`
+  (register/check/show), the ingester switched from JSON to Avro, and a **BACKWARD-compat CI
+  job**. Codec unit-tested (contracts.py 100%); registry/E2E is integration-lane (no broker on
+  the M4 this session — `docker` unavailable, so the live register/check is CI-verified).
+- [ ] Day B commit 2: declarative rules engine with quarantine routing  ← **NEXT**
+- [ ] Day B commit 3: synthetic fixture generator and fault injector
 
 ## Feed-sanity gate result — RUN 2026-07-19 (PASS on recalibrated terms; ADR-001)
 
@@ -70,15 +78,16 @@ snapshot backfill**, not feed lag. Full reasoning in [docs/decisions.md](docs/de
 
 ## What Day B does next
 
-Day A is closed and the gate is PASS (ADR-001). Day B proceeds; **NEXT = commit 1** below. Watch
-one carry-forward from ADR-001: the rules engine (commit 2) must implement R6's 30 s staleness
-window and stale→telemetry (not quarantine) behavior for the sparse second venue.
+Day A is closed and the gate is PASS (ADR-001). Commit 1 (contract + registry wiring) is done;
+**NEXT = commit 2** below. Carry-forward from ADR-001 that commit 2 must honor: the rules engine
+implements R6's **30 s staleness window** and stale→telemetry (not quarantine) behavior for the
+sparse second venue. The gate consumer decodes with `contracts.decode` (a raised `ValueError`
+is R1 `malformed`), and evaluates against the per-stream event-time watermark, never wall clock.
 
-1. **Day B commit 1 — `feat: add trades.v1 contract with schema registry wiring`.** ← **NEXT** Add
-   `contracts/trades.v1.avsc`, register subject `trades.raw-value` in Redpanda's Schema
-   Registry with **BACKWARD** compatibility (CI check), and switch the ingester's on-wire
-   encoding from JSON to Avro (record shape unchanged).
-2. **Day B commit 2 — `feat: add declarative rules engine with quarantine routing`** (+ gate
+1. **Day B commit 1 — DONE.** `contracts/trades.v1.avsc` + `contracts.py` (Avro wire codec,
+   `SchemaRegistry`, `ensure_registered`), `tickflow contract` (register/check/show), ingester
+   switched to Avro, BACKWARD-compat CI job. The live register/check runs in CI (needs a broker).
+2. **Day B commit 2 — `feat: add declarative rules engine with quarantine routing`** (+ gate  ← **NEXT**
    unit tests). Implement the 6 frozen rules from `contracts/rules.yaml` (R1 schema, R2 range,
    R3 duplicate/LRU-10k, R4 out-of-order vs per-stream watermark, R5 gap alert-only, R6
    divergence alert-only), the gate consumer (at-least-once, manual commits) routing to

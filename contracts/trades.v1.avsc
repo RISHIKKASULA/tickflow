@@ -1,0 +1,48 @@
+{
+  "type": "record",
+  "name": "TradeV1",
+  "namespace": "tickflow.trades.v1",
+  "doc": "A single trade normalized from any supported venue to the tickflow trades.v1 contract (frozen design §2). Ingesters normalize both venues' raw messages to this shape before producing to trades.raw; the gate only ever sees this record. Registered in Redpanda's Schema Registry as subject 'trades.raw-value' with BACKWARD compatibility. price/size are double (a documented v0.1 limitation, not decimal — fine at these magnitudes).",
+  "fields": [
+    {
+      "name": "exchange",
+      "type": "string",
+      "doc": "Source venue. Allowed values: 'coinbase' | 'kraken' (validated by the gate, not the schema)."
+    },
+    {
+      "name": "symbol",
+      "type": "string",
+      "doc": "Canonical symbol, e.g. 'BTC-USD' | 'ETH-USD'."
+    },
+    {
+      "name": "trade_id",
+      "type": "string",
+      "doc": "Venue trade id, coerced to string (Kraken sends integers)."
+    },
+    {
+      "name": "price",
+      "type": "double",
+      "doc": "Trade price. The gate enforces price > 0 and per-symbol range bounds (R2)."
+    },
+    {
+      "name": "size",
+      "type": "double",
+      "doc": "Trade size/quantity. The gate enforces size > 0 (R2)."
+    },
+    {
+      "name": "side",
+      "type": "string",
+      "doc": "Aggressor side. Allowed values: 'buy' | 'sell' | 'unknown'."
+    },
+    {
+      "name": "ts_event",
+      "type": { "type": "long", "logicalType": "timestamp-millis" },
+      "doc": "Exchange event time, epoch millis. The gate's per-stream watermark is built from this (never wall clock)."
+    },
+    {
+      "name": "ts_ingest",
+      "type": { "type": "long", "logicalType": "timestamp-millis" },
+      "doc": "Local receipt time, epoch millis. Wall-clock freshness telemetry only; excluded from CI metrics."
+    }
+  ]
+}

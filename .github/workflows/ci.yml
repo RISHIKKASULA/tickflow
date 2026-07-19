@@ -25,6 +25,34 @@ jobs:
       - name: Test
         run: uv run pytest
 
+  # Contract lane: register trades.v1 in Redpanda's Schema Registry with BACKWARD
+  # compatibility and assert the local contract stays compatible (§2, §10). Needs only the
+  # registry, so it runs now — ahead of the full end-to-end integration lane.
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - name: Install
+        run: uv sync
+      - name: Start Redpanda + Schema Registry (dev profile)
+        run: docker compose --profile dev up -d --wait
+      - name: Wait for the Schema Registry
+        run: |
+          for _ in $(seq 1 30); do
+            curl -sf http://localhost:18081/subjects && break || sleep 2
+          done
+      - name: Register trades.raw-value (BACKWARD)
+        run: uv run tickflow contract register
+      - name: Assert local contract is BACKWARD-compatible
+        run: uv run tickflow contract check
+      - name: Tear down
+        if: always()
+        run: docker compose --profile dev down -v
+
   # Integration lane: end-to-end replay against a real single-node Redpanda,
   # wired up as source logic lands (§10). Skeleton only on Day A.
   integration:

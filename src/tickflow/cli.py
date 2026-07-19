@@ -10,7 +10,7 @@ from __future__ import annotations
 import argparse
 from collections.abc import Sequence
 
-from tickflow import __version__, capture, ingest, sanity
+from tickflow import __version__, capture, contracts, ingest, sanity
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -23,6 +23,7 @@ def build_parser() -> argparse.ArgumentParser:
     ingest.register(subparsers)
     capture.register(subparsers)
     sanity.register(subparsers)
+    contracts.register(subparsers)
     return parser
 
 

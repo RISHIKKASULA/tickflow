@@ -2,10 +2,11 @@
 common schema, and produce raw ticks to the trades.raw topic.
 
 Normalization is the producer's job (frozen design §2): the gate never sees venue-specific
-formats. Day A emits JSON-serialized normalized records so the feed→broker path can be
-verified end to end and reviewed by eye at the sanity gate; the Avro contract + Schema
-Registry wiring lands in Day B, at which point the on-wire encoding switches to Avro without
-changing the normalized record shape.
+formats. Records are produced to `trades.raw` in the Confluent Avro wire format against the
+trades.v1 contract — at startup the ingester pins BACKWARD compatibility on subject
+`trades.raw-value`, registers the schema, and encodes every record with the returned schema id
+(see `contracts.py`). The normalized record shape is unchanged from the sanity-gate review; only
+the on-wire encoding is Avro rather than JSON.
 
 Feeds (frozen §1):
   - Coinbase (primary): wss://advanced-trade-ws.coinbase.com, `market_trades` channel — keyless.
@@ -36,6 +37,8 @@ from typing import Any, ClassVar, Protocol
 from confluent_kafka import Producer
 from websockets.asyncio.client import connect
 from websockets.exceptions import WebSocketException
+
+from tickflow import contracts
 
 CANONICAL_SYMBOLS: tuple[str, ...] = ("BTC-USD", "ETH-USD")
 DEFAULT_BOOTSTRAP = "localhost:19092"
@@ -213,21 +216,28 @@ def _key(trade: NormalizedTrade) -> bytes:
     return f"{trade.exchange}|{trade.symbol}|{trade.trade_id}".encode()
 
 
-def _encode(trade: NormalizedTrade) -> bytes:
-    return json.dumps(asdict(trade)).encode()
+@dataclass(frozen=True, slots=True)
+class _AvroEncoder:
+    """Encodes a normalized trade to the trades.v1 Confluent Avro wire format."""
+
+    schema: Any
+    schema_id: int
+
+    def __call__(self, trade: NormalizedTrade) -> bytes:
+        return contracts.encode(asdict(trade), self.schema, self.schema_id)
 
 
 def _log(message: str) -> None:
     print(f"[ingest] {message}", file=sys.stderr, flush=True)
 
 
-def _produce(producer: Producer, topic: str, trade: NormalizedTrade) -> None:
+def _produce(producer: Producer, topic: str, trade: NormalizedTrade, encoder: _AvroEncoder) -> None:
     try:
-        producer.produce(topic, key=_key(trade), value=_encode(trade))
+        producer.produce(topic, key=_key(trade), value=encoder(trade))
     except BufferError:
         # Local queue full: serve delivery callbacks to drain, then retry once.
         producer.poll(0.5)
-        producer.produce(topic, key=_key(trade), value=_encode(trade))
+        producer.produce(topic, key=_key(trade), value=encoder(trade))
 
 
 async def _run_feed(
@@ -235,6 +245,7 @@ async def _run_feed(
     symbols: Sequence[str],
     producer: Producer,
     topic: str,
+    encoder: _AvroEncoder,
     counters: dict[str, int],
     stop: asyncio.Event,
 ) -> None:
@@ -257,7 +268,7 @@ async def _run_feed(
                     if not isinstance(message, dict):
                         continue
                     for trade in feed.parse(message, _now_millis()):
-                        _produce(producer, topic, trade)
+                        _produce(producer, topic, trade, encoder)
                         counters[feed.name] += 1
                     producer.poll(0)
         except asyncio.CancelledError:
@@ -275,8 +286,16 @@ async def _ingest(
     symbols: Sequence[str],
     bootstrap: str,
     topic: str,
+    registry_url: str,
     duration: float,
 ) -> dict[str, int]:
+    # Pin BACKWARD compatibility and register the contract before producing a single record, so
+    # every message on trades.raw carries a schema id the gate can decode (§2).
+    schema = contracts.load_schema()
+    schema_id = contracts.ensure_registered(contracts.SchemaRegistry(registry_url))
+    encoder = _AvroEncoder(schema=schema, schema_id=schema_id)
+    _log(f"trades.v1 registered as schema id {schema_id}; encoding Avro to {topic}")
+
     producer = build_producer(bootstrap)
     stop = asyncio.Event()
     counters: dict[str, int] = {feed.name: 0 for feed in feeds}
@@ -288,7 +307,7 @@ async def _ingest(
             loop.add_signal_handler(sig, stop.set)
 
     tasks = [
-        asyncio.create_task(_run_feed(feed, symbols, producer, topic, counters, stop))
+        asyncio.create_task(_run_feed(feed, symbols, producer, topic, encoder, counters, stop))
         for feed in feeds
     ]
     if duration > 0:
@@ -317,7 +336,9 @@ def _handle(args: argparse.Namespace) -> int:
     feeds = _select_feeds(args.exchange)
     symbols = tuple(s.strip() for s in args.symbols.split(",") if s.strip())
     try:
-        asyncio.run(_ingest(feeds, symbols, args.bootstrap, args.topic, args.duration))
+        asyncio.run(
+            _ingest(feeds, symbols, args.bootstrap, args.topic, args.schema_registry, args.duration)
+        )
     except KeyboardInterrupt:  # pragma: no cover
         return 130
     return 0
@@ -341,6 +362,12 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     )
     parser.add_argument("--bootstrap", default=DEFAULT_BOOTSTRAP, help="Kafka bootstrap servers.")
     parser.add_argument("--topic", default=DEFAULT_TOPIC, help="Destination topic.")
+    parser.add_argument(
+        "--schema-registry",
+        default=contracts.DEFAULT_REGISTRY_URL,
+        dest="schema_registry",
+        help="Schema Registry base URL (default: http://localhost:18081).",
+    )
     parser.add_argument(
         "--duration",
         type=float,
