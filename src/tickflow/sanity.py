@@ -32,7 +32,15 @@ from tickflow.ingest import CANONICAL_SYMBOLS
 
 EXPECTED_EXCHANGES: tuple[str, ...] = ("coinbase", "kraken")
 EXPECTED_SYMBOLS: tuple[str, ...] = CANONICAL_SYMBOLS
-DEFAULT_MIN_MESSAGES = 50  # frozen gate threshold (§0)
+
+# Per-venue liveness thresholds (messages / stream / 5-min window), recalibrated in ADR-001.
+# The gate's job is to reject a dead or stalled feed, not to enforce a volume target: a single
+# cross-venue number wrongly assumed comparable volume. Kraken is genuinely thinner than
+# Coinbase, so each venue gets a floor derived from its own observed volume. Observed on
+# 2026-07-19 (5 min): coinbase {BTC 814, ETH 203}, kraken {BTC 29, ETH 14}. Floors sit well
+# below observed (~4x headroom for Coinbase, ~2.8x for Kraken's slowest stream) yet a stalled
+# feed trickling ~0 still fails. See docs/decisions.md ADR-001.
+DEFAULT_THRESHOLDS: dict[str, int] = {"coinbase": 50, "kraken": 5}
 SKEW_TOLERANCE_MS = 60_000  # event-time within ±60 s of wall clock (§0)
 
 StreamKey = tuple[str, str]
@@ -149,22 +157,29 @@ class GateResult:
 
     checksum_ok: bool
     per_stream: dict[StreamKey, bool]
+    thresholds: dict[str, int]
     provisional_pass: bool
 
 
 def evaluate_gate(
     stats: dict[StreamKey, StreamStats],
     checksum_ok: bool,
-    min_messages: int = DEFAULT_MIN_MESSAGES,
+    thresholds: dict[str, int] | None = None,
 ) -> GateResult:
+    merged = {**DEFAULT_THRESHOLDS, **(thresholds or {})}
     per_stream: dict[StreamKey, bool] = {}
     for exchange in EXPECTED_EXCHANGES:
         for symbol in EXPECTED_SYMBOLS:
             key = (exchange, symbol)
             count = stats[key].count if key in stats else 0
-            per_stream[key] = count >= min_messages
+            per_stream[key] = count >= merged[exchange]
     provisional = checksum_ok and all(per_stream.values())
-    return GateResult(checksum_ok=checksum_ok, per_stream=per_stream, provisional_pass=provisional)
+    return GateResult(
+        checksum_ok=checksum_ok,
+        per_stream=per_stream,
+        thresholds=merged,
+        provisional_pass=provisional,
+    )
 
 
 def _p(line: str = "") -> None:
@@ -183,7 +198,6 @@ def render_report(
     stats: dict[StreamKey, StreamStats],
     gate: GateResult,
     samples: int,
-    min_messages: int,
 ) -> None:
     _p("=" * 78)
     _p("tickflow feed-sanity report (§0)")
@@ -196,9 +210,10 @@ def render_report(
     _p(f"sha256       : {manifest.get('sha256', '?')[:16]}… [{checksum_state}]")
     _p("")
 
-    _p(f"Per-stream (threshold: ≥ {min_messages} messages):")
+    thresh_txt = ", ".join(f"{v}≥{gate.thresholds[v]}" for v in EXPECTED_EXCHANGES)
+    _p(f"Per-stream (per-venue liveness thresholds, ADR-001: {thresh_txt}):")
     header = (
-        f"  {'stream':<20}{'count':>7}{'uniq_id':>9}{'dup_id':>7}{'miss_id':>8}"
+        f"  {'stream':<20}{'count':>7}{'min':>5}{'uniq_id':>9}{'dup_id':>7}{'miss_id':>8}"
         f"{'maxskew_s':>11}{'<=60s':>7}{'ooo':>6}  verdict"
     )
     _p(header)
@@ -207,18 +222,19 @@ def render_report(
         for symbol in EXPECTED_SYMBOLS:
             key = (exchange, symbol)
             label = f"{exchange}:{symbol}"
+            threshold = gate.thresholds[exchange]
             verdict = "PASS" if gate.per_stream[key] else "FAIL"
             if key in stats:
                 st = stats[key]
                 _p(
-                    f"  {label:<20}{st.count:>7}{st.unique_trade_ids:>9}"
+                    f"  {label:<20}{st.count:>7}{threshold:>5}{st.unique_trade_ids:>9}"
                     f"{st.duplicate_trade_ids:>7}{st.missing_trade_ids:>8}"
                     f"{st.max_abs_skew_ms / 1000:>11.3f}{st.within_60s:>7}"
                     f"{st.out_of_order:>6}  {verdict}"
                 )
             else:
-                dashes = f"{'0':>7}{'-':>9}{'-':>7}{'-':>8}{'-':>11}{'-':>7}{'-':>6}"
-                _p(f"  {label:<20}{dashes}  {verdict}")
+                dashes = f"{'-':>9}{'-':>7}{'-':>8}{'-':>11}{'-':>7}{'-':>6}"
+                _p(f"  {label:<20}{'0':>7}{threshold:>5}{dashes}  {verdict}")
     _p("")
 
     _p(f"Field-mapping samples (up to {samples} raw->normalized pairs per stream):")
@@ -237,12 +253,21 @@ def render_report(
 
     _p("-" * 78)
     verdict = "PASS" if gate.provisional_pass else "FAIL"
-    _p(f"PROVISIONAL GATE: {verdict}  (checksum + presence + ≥{min_messages}/stream)")
+    _p(f"PROVISIONAL GATE: {verdict}  (checksum + presence + per-venue liveness thresholds)")
     _p(
         "This is the objective portion only. Field-mapping correctness and the final gate\n"
         "decision are a manual review (§0), recorded as ADR-001 in docs/decisions.md."
     )
     _p("-" * 78)
+
+
+def _parse_min(pairs: list[str] | None) -> dict[str, int]:
+    """Parse repeated ``--min venue=count`` flags into a threshold override map."""
+    overrides: dict[str, int] = {}
+    for pair in pairs or []:
+        venue, _, count = pair.partition("=")
+        overrides[venue.strip()] = int(count)
+    return overrides
 
 
 def _handle(args: argparse.Namespace) -> int:
@@ -266,8 +291,8 @@ def _handle(args: argparse.Namespace) -> int:
     checksum_ok, _expected, _actual = verify_checksum(capture_dir, manifest)
     records = read_records(capture_dir, manifest.get("stream_file", STREAM_FILE))
     stats = compute_stats(records, samples=args.samples)
-    gate = evaluate_gate(stats, checksum_ok, min_messages=args.min_messages)
-    render_report(capture_dir, manifest, stats, gate, args.samples, args.min_messages)
+    gate = evaluate_gate(stats, checksum_ok, thresholds=_parse_min(args.min))
+    render_report(capture_dir, manifest, stats, gate, args.samples)
     # Exit non-zero on a failed provisional gate so scripts/CI can branch; the human call stands.
     return 0 if gate.provisional_pass else 1
 
@@ -288,11 +313,13 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
         help="Capture root to search when --capture is omitted (default: data/captures).",
     )
     parser.add_argument(
-        "--min-messages",
-        type=int,
-        default=DEFAULT_MIN_MESSAGES,
-        dest="min_messages",
-        help="Per-stream message threshold for the provisional gate (frozen: 50).",
+        "--min",
+        action="append",
+        metavar="VENUE=COUNT",
+        help=(
+            "Override a per-venue liveness threshold, repeatable "
+            f"(default {DEFAULT_THRESHOLDS}; ADR-001). E.g. --min kraken=5 --min coinbase=50."
+        ),
     )
     parser.add_argument(
         "--samples",

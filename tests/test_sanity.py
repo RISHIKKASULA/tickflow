@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import Any
 
 from tickflow.sanity import (
-    DEFAULT_MIN_MESSAGES,
+    DEFAULT_THRESHOLDS,
     compute_stats,
     evaluate_gate,
 )
@@ -95,31 +95,51 @@ def _stream(count: int, exchange: str, symbol: str) -> list[dict[str, Any]]:
     return [_rec(exchange, symbol, str(i), base + i, base + i) for i in range(count)]
 
 
-def test_gate_passes_when_all_four_streams_meet_threshold() -> None:
+def _all_streams(coinbase_n: int, kraken_n: int) -> list[dict[str, Any]]:
     records: list[dict[str, Any]] = []
-    for exchange in ("coinbase", "kraken"):
-        for symbol in ("BTC-USD", "ETH-USD"):
-            records += _stream(DEFAULT_MIN_MESSAGES, exchange, symbol)
+    for symbol in ("BTC-USD", "ETH-USD"):
+        records += _stream(coinbase_n, "coinbase", symbol)
+        records += _stream(kraken_n, "kraken", symbol)
+    return records
+
+
+def test_gate_passes_when_each_venue_meets_its_own_threshold() -> None:
+    # Coinbase at its floor, Kraken at its (much lower) floor -> pass.
+    records = _all_streams(DEFAULT_THRESHOLDS["coinbase"], DEFAULT_THRESHOLDS["kraken"])
     gate = evaluate_gate(compute_stats(records), checksum_ok=True)
     assert gate.provisional_pass is True
     assert all(gate.per_stream.values())
+    assert gate.thresholds == DEFAULT_THRESHOLDS
 
 
-def test_gate_fails_on_thin_stream() -> None:
-    records = _stream(DEFAULT_MIN_MESSAGES, "coinbase", "BTC-USD")
-    records += _stream(DEFAULT_MIN_MESSAGES, "coinbase", "ETH-USD")
-    records += _stream(DEFAULT_MIN_MESSAGES, "kraken", "BTC-USD")
-    records += _stream(10, "kraken", "ETH-USD")  # below threshold
+def test_recalibration_accepts_sparse_kraken_that_flat_50_would_reject() -> None:
+    # The ADR-001 case: Kraken 29/14 clears its per-venue floor (5) but not a flat 50.
+    records = _all_streams(coinbase_n=200, kraken_n=14)
+    gate = evaluate_gate(compute_stats(records), checksum_ok=True)
+    assert gate.provisional_pass is True
+    assert gate.per_stream[("kraken", "ETH-USD")] is True
+    # A single cross-venue 50 would have failed both Kraken streams.
+    flat = evaluate_gate(compute_stats(records), checksum_ok=True, thresholds={"kraken": 50})
+    assert flat.per_stream[("kraken", "ETH-USD")] is False
+
+
+def test_gate_still_fails_a_stalled_kraken_below_its_floor() -> None:
+    # Liveness floor, not a lowered bar: a near-dead Kraken stream (3 < 5) still fails,
+    # while a healthy sparse Kraken stream (14 >= 5) passes.
+    records = _stream(200, "coinbase", "BTC-USD")
+    records += _stream(200, "coinbase", "ETH-USD")
+    records += _stream(14, "kraken", "BTC-USD")
+    records += _stream(3, "kraken", "ETH-USD")
     gate = evaluate_gate(compute_stats(records), checksum_ok=True)
     assert gate.provisional_pass is False
     assert gate.per_stream[("kraken", "ETH-USD")] is False
-    assert gate.per_stream[("coinbase", "BTC-USD")] is True
+    assert gate.per_stream[("kraken", "BTC-USD")] is True
 
 
 def test_gate_fails_on_missing_feed_entirely() -> None:
     records: list[dict[str, Any]] = []
     for symbol in ("BTC-USD", "ETH-USD"):
-        records += _stream(DEFAULT_MIN_MESSAGES, "coinbase", symbol)  # kraken absent
+        records += _stream(200, "coinbase", symbol)  # kraken absent
     gate = evaluate_gate(compute_stats(records), checksum_ok=True)
     assert gate.provisional_pass is False
     assert gate.per_stream[("kraken", "BTC-USD")] is False
@@ -127,10 +147,7 @@ def test_gate_fails_on_missing_feed_entirely() -> None:
 
 
 def test_gate_fails_on_checksum_mismatch_even_if_counts_pass() -> None:
-    records: list[dict[str, Any]] = []
-    for exchange in ("coinbase", "kraken"):
-        for symbol in ("BTC-USD", "ETH-USD"):
-            records += _stream(DEFAULT_MIN_MESSAGES, exchange, symbol)
+    records = _all_streams(DEFAULT_THRESHOLDS["coinbase"], DEFAULT_THRESHOLDS["kraken"])
     gate = evaluate_gate(compute_stats(records), checksum_ok=False)
     assert gate.provisional_pass is False
     assert all(gate.per_stream.values())  # counts fine, but integrity failed
