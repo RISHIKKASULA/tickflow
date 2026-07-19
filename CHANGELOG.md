@@ -24,3 +24,12 @@ All notable changes to this project are documented here. The format follows
   detail, offset, ts, raw bytes; idempotent write key); R5–R6 are alert-only. R6 honors the
   ADR-001 30 s staleness window (no verdict + `divergence_unavailable` telemetry on a stale
   venue). `tickflow gate` runs the at-least-once consumer with manual commits.
+- Synthetic fixture generator and fault injector (`src/tickflow/fixture.py`, `fixtures.yaml`,
+  committed `fixtures/trades.v1.clean.parquet`): a seeded (42), integer-driven, deterministic
+  clean fixture of 4 streams × 25,000 = 100,000 `trades.v1` messages as zstd parquet, pinned by
+  a platform-independent content digest (CI's system of record). A seeded fault injector rewrites
+  ~2% of messages into the four quarantine-rule fault classes (`malformed`→R1, `out-of-range`→R2,
+  `duplicate`→R3, `out-of-order`→R4) and emits an injection manifest — the ground truth Day C
+  grades detection precision/recall against. Boundary faults are deliberate: values exactly on
+  the inclusive range bound, 4.9 s vs 5.0 s vs 5.1 s skews, and duplicates at the exact LRU-window
+  edge (lru−1 keys back → caught vs lru back → designed miss). `tickflow fixture generate/verify`.

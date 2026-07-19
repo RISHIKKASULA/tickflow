@@ -1,0 +1,16 @@
+# Pinned identity of the committed synthetic fixture (frozen §5). CI verifies these
+# before every metrics run: content_sha256 is the platform-independent record digest;
+# parquet_sha256 is the committed file's byte checksum. Regenerate with `tickflow
+# fixture generate`; the fault injector runs at grading time and is never committed.
+content_sha256: 942bd683dd7b5433efdb2c3ee1b36060c8c7b944ed1e2f10f365cf40ed1873a6
+n_per_stream: 25000
+n_total: 100000
+parquet: fixtures/trades.v1.clean.parquet
+parquet_sha256: ae3cf8b5be1f5c2e9adf4faac27a560853ae3f2e3b3d803b148eee98d06fd4fe
+seed: 42
+streams:
+- coinbase:BTC-USD
+- coinbase:ETH-USD
+- kraken:BTC-USD
+- kraken:ETH-USD
+version: 1
