@@ -1,8 +1,9 @@
 """tickflow command-line entry point.
 
 Subcommands are registered here and delegate to focused modules. Day A wires the ingester
-(`tickflow ingest`); the gate, replay, bars, metrics, and export commands land in later phases
-per the frozen build order (docs/architecture.md §11).
+(`tickflow ingest`); Day B adds the contract and the quality gate (`tickflow gate`); replay,
+bars, metrics, and export land in later phases per the frozen build order (docs/architecture.md
+§11).
 """
 
 from __future__ import annotations
@@ -10,7 +11,7 @@ from __future__ import annotations
 import argparse
 from collections.abc import Sequence
 
-from tickflow import __version__, capture, contracts, ingest, sanity
+from tickflow import __version__, capture, contracts, gate, ingest, sanity
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -24,6 +25,7 @@ def build_parser() -> argparse.ArgumentParser:
     capture.register(subparsers)
     sanity.register(subparsers)
     contracts.register(subparsers)
+    gate.register(subparsers)
     return parser
 
 

@@ -1,0 +1,74 @@
+# tickflow trades.raw rule set — the declarative, versioned, per-topic contract (frozen §2).
+#
+# Six rules. R1–R4 QUARANTINE a bad message (route it to trades.quarantine with a rule label);
+# R5–R6 are ALERT-ONLY and never quarantine. The frozen rationale (README wording): a genuine
+# market move diverges across venues before it converges, and a missing print is not a bad
+# message — quarantining for R5/R6 would punish true data for reality's behavior. Detection is
+# not rejection; the gate distinguishes them.
+#
+# Clock rule (frozen — this is what makes replay bit-deterministic): R3–R6 evaluate against the
+# per-stream EVENT-TIME watermark (max ts_event seen on that stream), never wall clock. Same
+# messages in, same verdicts out, live or replay. Wall-clock freshness is live-mode telemetry
+# only, excluded from CI metrics.
+#
+# The engine (src/tickflow/gate.py) reads every threshold, bound, and disposition from this file.
+# Editing a number here changes the gate; nothing is hard-coded in the engine.
+
+version: 1
+topic: trades.raw
+schema: trades.v1
+
+rules:
+  - id: R1
+    name: schema
+    kind: schema
+    on_violation: quarantine
+    reason: malformed
+    # Avro decode against the trades.v1 contract must succeed. A raised decode error
+    # (bad magic byte, truncated or corrupt body) is a malformed frame.
+
+  - id: R2
+    name: range
+    kind: range
+    on_violation: quarantine
+    reason: out-of-range
+    params:
+      price_min: 0.0            # price must be strictly > price_min
+      size_min: 0.0             # size must be strictly > size_min
+      symbol_bounds:            # static per-symbol price bounds, inclusive
+        BTC-USD: [1.0e3, 1.0e7]
+        ETH-USD: [50.0, 1.0e6]
+
+  - id: R3
+    name: duplicate
+    kind: duplicate
+    on_violation: quarantine
+    reason: duplicate
+    params:
+      lru_size: 10000           # (exchange, symbol, trade_id) seen within the last N distinct keys
+
+  - id: R4
+    name: out_of_order
+    kind: out_of_order
+    on_violation: quarantine
+    reason: out-of-order
+    params:
+      tolerance_ms: 5000        # quarantine when ts_event < watermark - tolerance_ms
+
+  - id: R5
+    name: gap
+    kind: gap
+    on_violation: alert         # ALERT-ONLY — you cannot quarantine a message that never arrived
+    reason: gap
+    params:
+      threshold_ms: 60000       # alert when the watermark jumps forward by more than this
+
+  - id: R6
+    name: divergence
+    kind: divergence
+    on_violation: alert         # ALERT-ONLY — a real move diverges before it converges
+    reason: divergence
+    params:
+      deviation_pct: 0.5        # cross-venue last-trade deviation, percent (|a-b| / mid)
+      sustained_ms: 10000       # ...held continuously for this long (event-time) before alerting
+      staleness_ms: 30000       # a venue's last print is comparable only within this window (ADR-001)

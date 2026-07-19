@@ -17,3 +17,10 @@ All notable changes to this project are documented here. The format follows
 - `trades.v1` Avro contract (`contracts/trades.v1.avsc`) with Schema Registry wiring: subject
   `trades.raw-value` registered with BACKWARD compatibility (CI check), a `tickflow contract`
   command (register/check/show), and the ingester switched to the Confluent Avro wire format.
+- Declarative rules engine with quarantine routing (`contracts/rules.yaml`, `src/tickflow/gate.py`):
+  the six frozen rules (R1 schema, R2 range, R3 duplicate/LRU-10k, R4 out-of-order, R5 gap,
+  R6 cross-venue divergence) evaluated against the per-stream event-time watermark, never wall
+  clock. R1–R4 quarantine to `trades.quarantine` with a self-describing envelope (rule_id,
+  detail, offset, ts, raw bytes; idempotent write key); R5–R6 are alert-only. R6 honors the
+  ADR-001 30 s staleness window (no verdict + `divergence_unavailable` telemetry on a stale
+  venue). `tickflow gate` runs the at-least-once consumer with manual commits.
