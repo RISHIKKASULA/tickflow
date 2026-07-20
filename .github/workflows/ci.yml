@@ -25,6 +25,31 @@ jobs:
       - name: Test
         run: uv run pytest
 
+  # Fault-injection replay + grade (frozen §5/§6/§7). Deterministic and in-process — no broker —
+  # so it runs in the fast lane on every push: verify the committed fixture's checksum, replay it
+  # through the seeded injector and the real gate, and grade detection precision/recall against the
+  # injection manifest with bootstrap 95% CIs. The designed-miss duplicates (dups past the LRU
+  # window the gate cannot catch) are reported honestly as the R3 recall gap, not treated as a
+  # failure. The graded telemetry JSON is archived. The broker-based metrics job that publishes the
+  # Pages dashboard with full provenance (commit SHA, runner spec, latency percentiles) is Day D.
+  metrics:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - name: Install
+        run: uv sync
+      - name: Replay the committed fixture and grade with bootstrap CIs
+        run: uv run tickflow metrics --out metrics.json
+      - name: Archive graded telemetry
+        uses: actions/upload-artifact@v4
+        with:
+          name: metrics
+          path: metrics.json
+
   # Contract lane: register trades.v1 in Redpanda's Schema Registry with BACKWARD
   # compatibility and assert the local contract stays compatible (§2, §10). Needs only the
   # registry, so it runs now — ahead of the full end-to-end integration lane.

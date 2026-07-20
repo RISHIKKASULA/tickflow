@@ -50,3 +50,12 @@ All notable changes to this project are documented here. The format follows
   ground-truth valid projection; the designed misses are surfaced as the R3 recall gap, not hidden.
   ADR-002 records why the reference is the valid projection, not the raw clean fixture (the injector
   replaces in place and its boundary controls alter values by design).
+- Fault-injection grading with bootstrap CIs (`src/tickflow/metrics.py`, `tickflow metrics`): grade
+  the gate's verdict stream against the injection manifest — detection recall per fault class,
+  precision per rule, false-quarantine rate over the boundary controls + all untouched clean, and
+  completeness (every input accounted for exactly once). Every proportion carries a 95% bootstrap CI
+  (B=10,000, seed 42, percentile interval; the exact `Binomial(n, k/n)/n` identity for a proportion).
+  Reported honestly as `point [lo, hi]`: R1/R2/R4 recall 1.0000, R3 recall 0.8407 [0.8071, 0.8721]
+  — the designed-miss duplicates drag it below 100% by design (§5), not a failure. A new `metrics`
+  CI job replays the committed fixture in-process (no broker), grades it, and archives the telemetry
+  JSON; the broker-based publishing workflow with full provenance is Day D.
