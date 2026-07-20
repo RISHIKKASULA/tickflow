@@ -73,6 +73,36 @@ metrics workflow and Pages dashboard` · live soak · `test: complete coverage t
   zero false-quarantine on clean; generator + injection determinism proven. **fixture.py 100%
   covered; ruff/mypy/pytest green (118 tests total).**
 - **Day B COMPLETE.** Next work is Day C commit 1 (barbuilder + SLO + DuckDB).
+- [x] Day C commit 1: barbuilder + SLO checker + DuckDB sink — `src/tickflow/bars.py`. `BarBuilder`
+  folds `trades.valid` into 1-minute OHLCV bars per (exchange, symbol) keyed off the **event-time
+  watermark**, fully order-independent (open/close by `(ts_event, trade_id)`, high/low by max/min,
+  volume summed in **integer micro-units**) so replayed bars are bit-identical regardless of
+  delivery order. `check_slo` enforces the frozen invariants (high ≥ low, open/close within
+  [low, high], volume > 0, positive prices, monotone bar timestamps, and the load-bearing **no bar
+  built from a message the gate would quarantine**). `DuckDbSink` is an append-only single-writer
+  local store; bar market values never leave the environment (§1 ToS). Kafka consumer glue is
+  integration-lane. **bars.py 100% covered.**
+- [x] Day C commit 2: gates-off demo mode + SLO comparison — `run_slo_experiment` in `bars.py` +
+  the first-class `--gates-off` flag on `tickflow gate`. Replaying the fault-injected fixture twice:
+  **gates ON → 0 SLO violations; gates OFF → K > 0 violated bars** (dominated by `no_quarantinable`
+  plus corrupted extremes) — the thesis made visible. Bit-identity is checked on the **catchable**
+  fault subset (designed-miss dups filtered out) against the manifest's ground-truth **valid
+  projection**; designed misses are surfaced as `designed_miss_dups` (R3 recall gap), not hidden.
+  **ADR-002** records why the reference is the valid projection, not the raw clean fixture (the
+  injector replaces in place and its boundary controls alter values by design; the raw clean fixture
+  is reconstructed only from clean *input*, which is also asserted).
+- [x] Day C commit 3: fault-injection grading with bootstrap CIs — `src/tickflow/metrics.py` +
+  `tickflow metrics` + a new **`metrics` CI job**. Grades the gate's verdict stream against the
+  injection manifest: recall per fault class, precision per rule, false-quarantine over controls +
+  all clean, completeness (every input accounted for exactly once). Every proportion carries a 95%
+  bootstrap CI (B=10,000, seed 42, percentile; the exact `Binomial(n, k/n)/n` identity). Committed
+  fixture grades to: R1/R2/R4 recall **1.0000**, R3 recall **0.8407 [0.8071, 0.8721]** (76 designed
+  misses, reported honestly), all precision **1.0000**, false-quarantine **0.0000** over 98,800
+  controls, completeness ok. In-process/no-broker, so it runs in CI's fast lane. **metrics.py 100%
+  covered; whole toolchain green (ruff/mypy/pytest, 158 tests, core coverage 100%).**
+- **Day C COMPLETE (commits 1–3).** Stopped after the replay metrics per the run's mandate; the
+  quarantine-inspection + replay CLI (the original Day-C commit 4) is deferred to Day D via the §11
+  slip valve — never the gate, the SLO experiment, or the CIs.
 
 ## Feed-sanity gate result — RUN 2026-07-19 (PASS on recalibrated terms; ADR-001)
 
@@ -124,44 +154,71 @@ core coverage 100%):
 grading; `by_index()`, `counts_by_class()`, `fault_rate()`, `to_json()`/`digest()` are ready for
 the metrics code. `fixture.verify_fixture()` is the CI checksum gate.
 
-## What Day C does next  ← **NEXT**
+## Day C — COMPLETE (commits 1–3)
 
-Day C turns the gate into measured evidence (frozen §4/§6, commit arc §11). In order:
+Day C turned the gate into measured evidence (frozen §4/§6). The whole toolchain is green
+(ruff/mypy/pytest, **158 tests, core coverage 100%** — bars.py + metrics.py added at 100%):
 
-1. **`feat: add barbuilder with SLO checker and DuckDB sink`** — `bars.py` consumes
-   `trades.valid`, builds 1-minute OHLCV bars per (exchange, symbol), appends to DuckDB
-   (single-writer, append-only). SLO invariants: high ≥ low, high ≥ open/close ≥ low, volume > 0,
-   monotone bar timestamps, no bar built from a message the gate would quarantine. Bar values
-   never leave the local environment (§1 ToS).
-2. **`feat: add gates-off demo mode with SLO comparison`** — a first-class `--gates-off` flag
-   routing everything to valid. The signature experiment: replay the fault-injected fixture (from
-   commit 3) twice. Gates ON → bars **bit-identical** to clean-fixture bars, zero SLO violations;
-   gates OFF → the SLO checker counts K violated bars. The ON/OFF table is the README's opening
-   evidence. **⚠ Carry-forward the injector forces you to resolve here:** the `duplicate` class
-   includes *designed misses* (dups past the LRU window, manifest `detectable=False`) that the
-   gate legitimately cannot catch, so they route valid **even with gates ON** — meaning raw
-   gates-ON bars will NOT be bit-identical to clean-fixture bars. Resolve deliberately, e.g. run
-   the §4 bit-identity experiment on the *catchable* fault subset (filter the injected stream to
-   `is_fault → detectable`, keeping all controls), and report the designed-miss dups separately as
-   the R3 recall gap (§6). The manifest's `detectable`/`expected_disposition` fields exist for
-   exactly this split. Do NOT "fix" it by deleting the designed misses — they are the frozen §5
-   point that keeps recall honest.
-3. **`feat: add fault-injection grading with bootstrap CIs`** — `metrics.py` grades gate output
-   against the injection manifest: for each entry compare the gate verdict at `entry.index` to
-   `expected_disposition`/`expected_rule`; detection recall/precision **per fault class** (recall
-   denominator = `is_fault` entries, so designed misses correctly drag R3 recall below 100%),
-   false-quarantine rate on `is_fault=False` controls + untouched clean (`n_clean_controls`),
-   completeness (every input accounted for exactly once across valid+quarantine). `manifest.by_index()`
-   and `counts_by_class()` are the grading handles. Every proportion carries a bootstrap 95% CI
-   (B=10,000, seed 42, percentile intervals); report format `point [lo, hi]`.
-4. **`feat: add quarantine inspection and replay CLI`** — `quarantine.py`: `tickflow quarantine`
-   ls/show/stats over the envelopes this commit's gate emits, plus `tickflow replay --fixture`.
-   Then replay-determinism + completeness (kill/restart mid-replay → exactly-once accounting)
-   tests green. **Slip valve (§11):** if Day C overruns, v0.9 drops this quarantine-replay CLI and
-   the live-soak section — never the gate, the SLO experiment, or the CIs.
+1. **Commit 1 — DONE.** `src/tickflow/bars.py`: `BarBuilder` (1-min OHLCV per stream, event-time
+   watermark, order-independent so replay is bit-identical), `check_slo` (the frozen invariants,
+   including "no bar built from a quarantine-worthy message"), `DuckDbSink` (append-only, single
+   writer, local-only bar values).
+2. **Commit 2 — DONE.** `run_slo_experiment` + `--gates-off`: gates ON → 0 SLO violations, gates
+   OFF → K > 0 violated bars. Bit-identity checked on the catchable subset vs the ground-truth
+   **valid projection**; designed misses surfaced as the R3 recall gap. **ADR-002** records the
+   reference clarification (valid projection, not the raw clean fixture — the injector replaces in
+   place and its boundary controls alter values by design).
+3. **Commit 3 — DONE.** `src/tickflow/metrics.py` + `tickflow metrics` + a `metrics` CI job:
+   recall per class, precision per rule, false-quarantine, completeness, each with a 95% bootstrap
+   CI. Committed-fixture numbers: R1/R2/R4 recall 1.0000, **R3 recall 0.8407 [0.8071, 0.8721]**
+   (76 designed misses, honest), precision 1.0000, false-quarantine 0.0000 / 98,800, complete.
 
-Then Day D: telemetry export with schema enforcement, metrics workflow + Pages dashboard, live
-soak, coverage-to-gate, README with measured numbers, release grep gate, `chore: release v0.1.0`.
+**Not done (deferred to Day D by the §11 slip valve):** the original Day-C commit 4 —
+`quarantine.py` (`tickflow quarantine` ls/show/stats + `tickflow replay --fixture`) and the
+replay-determinism + kill/restart completeness tests. This run stopped after the replay metrics
+landed, per its mandate. The gate, the SLO experiment, and the CIs — the parts the slip valve
+protects — are all shipped.
+
+## What Day D does next  ← **NEXT**
+
+Day D publishes the evidence and ships v0.1.0 (frozen §7/§8/§11/§14). In order:
+
+1. **`feat: add telemetry export with schema enforcement`** — `export.py`: write only fields
+   declared in `telemetry_schema.json` (counts, rates, latencies, verdicts, timestamps). The
+   grade/SLO/telemetry payloads already added in Day C are telemetry-only by construction (a test
+   already asserts no market-field keys, allowing `ci_low`/`ci_high`); Day D makes the allowlist a
+   **release-blocking** enforcement — a smuggled `price`/`open`/`high`/`low`/`close`/`volume`/`vwap`
+   field fails the build (§8, ToS §1). The provenance stamp (commit SHA, fixture + manifest
+   checksums, compose profile, runner spec, timestamps) is added to every metrics artifact (§6).
+2. **`feat: add metrics workflow and Pages dashboard`** — `metrics.yml` (broker-based, `bench`
+   profile, cron+manual): verify fixture checksum → start Redpanda → replay → grade → bootstrap →
+   export telemetry JSON → deploy `site/` to Pages. **Dashboard is PIPELINE TELEMETRY ONLY, never
+   price charts** (Coinbase ToS, release-blocking): the gate P/R table with CIs per fault class
+   (surfacing the R3 designed-miss recall gap next to the perfect classes), completeness,
+   throughput/latency with the environment-disclosure line, quarantine rate by rule, the
+   gates-ON/OFF SLO comparison, the live-soak section (labeled), and a "last successful refresh"
+   timestamp (never a cadence claim). Plain HTML/CSS + one committed JSON — no JS frameworks, no
+   price/open/high/low/close/volume/vwap anywhere.
+3. **`feat: add quarantine inspection and replay CLI`** (deferred from Day C) — `quarantine.py`:
+   `tickflow quarantine` ls/show/stats over the envelopes the gate emits + `tickflow replay
+   --fixture`. Then replay-determinism + completeness (**kill/restart the gate consumer mid-replay
+   → exactly-once accounting**) tests green; this is what enables the currently-`if: false`
+   integration lane in `ci.yml` (mini-fixture → replay → gate → bars → grade → export, E2E < 5 min
+   against a real Redpanda). Slip-valve droppable for a v0.9 if Day D overruns.
+4. **Live soak on the M4** (overnight-capable, real Coinbase+Kraken): reconnects, gaps, real
+   divergence alerts, uptime/completeness telemetry — labeled "measured on Apple M4 … not
+   independently reproducible" (§7). Soak telemetry may publish; soak market data may not.
+5. **`test: complete coverage to gate`** — close any remaining core-coverage gaps to the ≥ 85 %
+   frozen bar (currently 100 % on the built core).
+6. **`docs: write README with measured results`** — numbers + CIs from the real metrics artifact;
+   the three verified gap citations (Confluent clause, Grab, DEW) load-bearing; incident references
+   hedged as motivation only; full limitations section (synthetic fixture, `bench`/fsync caveat,
+   deterministic-rules recall scope, single-node, at-least-once, `double` not decimal, telemetry-
+   only dashboard, best-effort cron refresh). State the bit-identity claim per ADR-002.
+7. **Release grep gate** — release-blocking scan over README, docs/, src/, site/, and the git log:
+   zero employer/internship/private-work references **and** zero market-data-derived export.
+8. **`chore: release v0.1.0`** — tag once §14 acceptance criteria all pass. (Verify the checkpoint
+   rule at first push; never change a GitHub setting to work around a problem — surface it.)
 
 ## Local environment notes
 
