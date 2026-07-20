@@ -5,10 +5,10 @@
 builds 1-minute OHLCV bars per (exchange, symbol), appended to a local DuckDB. It has no quality
 logic of its own — that is the whole point. If the gate were deleted, every fault the gate
 quarantines would flow straight into these bars and corrupt them, and the SLO checker would light
-up. The gates-ON/OFF experiment (§4, `demo.py`... no — see `slo_experiment` below) measures exactly
-that: quality gates judged by what they prevent, not by assertion.
+up. The gates-ON/OFF experiment (`run_slo_experiment`, below) measures exactly that: quality gates
+judged by what they prevent, not by assertion.
 
-Three coverage-gated pieces live here (§9):
+Four coverage-gated pieces live here (§9):
 
 - **`BarBuilder` — the pure aggregator.** Bars are keyed off the **event-time watermark**, never
   wall clock: a trade's bar is `ts_event` floored to the minute. Aggregation is fully
@@ -29,6 +29,18 @@ Three coverage-gated pieces live here (§9):
   leave the environment (§1 ToS) — the telemetry dashboard publishes counts and rates, never a
   price, and that separation is enforced downstream at export time.
 
+- **`run_slo_experiment` — the signature gates-ON/OFF comparison (§4).** Replay the fault-injected
+  fixture through the real gate twice. Gates ON: quarantine-worthy frames are removed, so the bars
+  carry **zero SLO violations**. Gates OFF: everything decodable routes valid, the faults land in
+  the bars, and the SLO checker counts `K > 0` violated bars — the README's opening evidence.
+  It also checks the §4 **bit-identity** claim on the *catchable* fault subset: with the designed-
+  miss duplicates filtered out (dups past the LRU window the gate legitimately cannot catch,
+  manifest `detectable=False`), the gate's gates-ON bars are **bit-identical** to bars built from
+  the manifest's ground-truth valid projection. The designed-miss dups are reported separately as
+  the R3 recall gap (§5/§6) — they are the frozen point that keeps recall honest, not a bug to fix.
+  Why the reference is the ground-truth *valid projection* and not the raw clean fixture (the
+  injector's boundary controls deliberately alter values in place) is recorded in ADR-002.
+
 The Kafka consumer that reads `trades.valid` and feeds the builder is network glue, exercised in
 the integration lane and marked no-cover, mirroring `gate.run_gate` / `contracts.SchemaRegistry`.
 """
@@ -41,7 +53,18 @@ import json
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+from tickflow import contracts
+from tickflow.gate import (
+    DISPOSITION_VALID,
+    RulesConfig,
+    Verdict,
+    evaluate_all,
+)
+
+if TYPE_CHECKING:
+    from tickflow.fixture import InjectionManifest
 
 BAR_MS = 60_000  # 1-minute bars (frozen §4)
 _VOL_SCALE = 1_000_000  # integer micro-units for order-independent, bit-stable volume sums
@@ -425,6 +448,135 @@ class DuckDbSink:
 
 
 # --------------------------------------------------------------------------------------------
+# The gates-ON/OFF SLO experiment (frozen §4) — quality gates measured by what they prevent.
+# --------------------------------------------------------------------------------------------
+def _is_designed_miss(entry: Any) -> bool:
+    """A manifest entry the gate legitimately cannot catch (a dup past the LRU window, §5)."""
+    return entry is not None and entry.is_fault and not entry.detectable
+
+
+def gates_off_bars(verdicts: Sequence[Verdict]) -> list[Bar]:
+    """Bars as they would be with **no gate**: every decodable frame routes valid.
+
+    Each trade is fed with `tainted = (the gate would have quarantined it)`, so a bar with any
+    quarantine-worthy constituent trips the frozen `no_quarantinable` SLO invariant. Malformed
+    frames (`record is None`) cannot be decoded into a bar even with gates off — their damage is a
+    *lost* message (a completeness cost graded by metrics), not a corrupted bar.
+    """
+    builder = BarBuilder()
+    for verdict in verdicts:
+        if verdict.record is not None:
+            builder.add(verdict.record, tainted=verdict.is_quarantine)
+    return builder.bars()
+
+
+def gates_on_bars(verdicts: Sequence[Verdict]) -> list[Bar]:
+    """Bars behind a live gate: only frames routed valid reach the builder (nothing tainted)."""
+    builder = BarBuilder()
+    for verdict in verdicts:
+        if verdict.is_valid and verdict.record is not None:
+            builder.add(verdict.record)
+    return builder.bars()
+
+
+def expected_valid_projection_bars(
+    frames: Sequence[bytes], manifest: InjectionManifest, schema: Any
+) -> list[Bar]:
+    """Bars from the manifest's ground-truth VALID projection — the §4 bit-identity reference.
+
+    `frames` must be the **full** injected stream: the manifest indexes it by absolute position.
+    For every frame the manifest marks expected-valid (controls as-emitted + untouched clean),
+    with the designed-miss duplicates excluded, decode it and fold it in. A correct gate routes
+    exactly this set to valid, so its gates-ON bars must equal these bar-for-bar. This — not the
+    raw clean fixture — is the right reference, because the injector's boundary controls alter
+    values in place (ADR-002); the raw clean fixture is bit-reconstructed only from clean input.
+    """
+    by_index = manifest.by_index()
+    builder = BarBuilder()
+    for index, frame in enumerate(frames):
+        entry = by_index.get(index)
+        if _is_designed_miss(entry):
+            continue
+        if entry is not None and entry.expected_disposition != DISPOSITION_VALID:
+            continue  # an expected-quarantine fault — not part of the valid projection
+        _schema_id, record = contracts.decode(frame, schema)
+        builder.add(record)
+    return builder.bars()
+
+
+@dataclass(frozen=True, slots=True)
+class SloComparison:
+    """The gates-ON vs gates-OFF SLO result plus the catchable-subset bit-identity check (§4)."""
+
+    n_frames: int
+    gates_on: SloReport
+    gates_off: SloReport
+    on_digest: str  # gates-ON bars on the catchable subset
+    reference_digest: str  # ground-truth valid projection on the catchable subset
+    bit_identical: bool
+    designed_miss_dups: int  # dups past the LRU window — the honest R3 recall gap (§5/§6)
+
+    @property
+    def thesis_holds(self) -> bool:
+        """The signature result: gates ON keep the SLO; gates OFF break it; bars reconstruct."""
+        return self.gates_on.ok and not self.gates_off.ok and self.bit_identical
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "n_frames": self.n_frames,
+            "gates_on": self.gates_on.as_dict(),
+            "gates_off": self.gates_off.as_dict(),
+            "bit_identical": self.bit_identical,
+            "on_digest": self.on_digest,
+            "reference_digest": self.reference_digest,
+            "designed_miss_dups": self.designed_miss_dups,
+            "thesis_holds": self.thesis_holds,
+        }
+
+
+def run_slo_experiment(
+    config: RulesConfig,
+    schema: Any,
+    frames: Sequence[bytes],
+    manifest: InjectionManifest,
+) -> SloComparison:
+    """Replay a fault-injected fixture through the real gate twice and compare (frozen §4).
+
+    Deterministic: the engine is a pure function of its state and input, so the whole comparison is
+    reproducible from a seeded fixture. The gates-ON/OFF SLO counts are computed over the **full**
+    stream (designed misses included — they are real, uncatchable duplicates); the bit-identity
+    check runs on the **catchable subset** (designed misses filtered out) against the ground-truth
+    valid projection. `designed_miss_dups` is surfaced, not hidden — it is the R3 recall gap the
+    metrics phase quantifies.
+    """
+    verdicts = evaluate_all(config, schema, list(frames))
+    on_report = check_slo(gates_on_bars(verdicts))
+    off_report = check_slo(gates_off_bars(verdicts))
+
+    by_index = manifest.by_index()
+    catchable_frames = [
+        frame for index, frame in enumerate(frames) if not _is_designed_miss(by_index.get(index))
+    ]
+    catchable_verdicts = evaluate_all(config, schema, catchable_frames)
+    on_digest = bars_digest(gates_on_bars(catchable_verdicts))
+    # The projection reads the manifest by ABSOLUTE (full-stream) index, so it runs over the full
+    # frames and skips designed misses / expected-quarantine faults itself — yielding the same
+    # valid set the gate produces on the catchable subset.
+    reference_digest = bars_digest(expected_valid_projection_bars(frames, manifest, schema))
+    designed_miss_dups = sum(1 for entry in manifest.entries if _is_designed_miss(entry))
+
+    return SloComparison(
+        n_frames=len(frames),
+        gates_on=on_report,
+        gates_off=off_report,
+        on_digest=on_digest,
+        reference_digest=reference_digest,
+        bit_identical=(on_digest == reference_digest),
+        designed_miss_dups=designed_miss_dups,
+    )
+
+
+# --------------------------------------------------------------------------------------------
 # Kafka consumer glue — reads trades.valid, builds bars, appends to DuckDB (integration lane).
 # --------------------------------------------------------------------------------------------
 def run_barbuilder(  # pragma: no cover - network I/O, integration lane
@@ -442,7 +594,6 @@ def run_barbuilder(  # pragma: no cover - network I/O, integration lane
 
     from confluent_kafka import Consumer
 
-    from tickflow import contracts
     from tickflow.gate import TRADES_VALID
 
     schema = contracts.load_schema()

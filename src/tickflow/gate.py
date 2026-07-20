@@ -526,12 +526,18 @@ def run_gate(  # pragma: no cover - network I/O, integration lane
     group_id: str = "tickflow-gate",
     registry_url: str = contracts.DEFAULT_REGISTRY_URL,
     max_messages: int = 0,
+    gates_off: bool = False,
 ) -> Telemetry:
     """Consume `trades.raw`, apply the gate, and route to valid/quarantine with manual commits.
 
     At-least-once: the source offset is committed only after the message has been produced to its
     destination and the producer flushed, so a crash re-delivers rather than drops. Quarantine
     writes are keyed by the envelope key (source coordinates), so re-delivery is idempotent.
+
+    `gates_off` is the first-class §4 demo flag: the engine still *evaluates* every frame (so the
+    telemetry records what WOULD have been quarantined), but every decodable frame is routed to
+    `trades.valid` — nothing is quarantined. This is what makes the downstream SLO visibly break;
+    it exists to demonstrate the gate's value, never for production use.
     """
     import sys
 
@@ -572,12 +578,14 @@ def run_gate(  # pragma: no cover - network I/O, integration lane
                 consumer.commit(message=message, asynchronous=False)
                 continue
             verdict = engine.evaluate(raw)
-            if verdict.is_quarantine:
+            if verdict.is_quarantine and not gates_off:
                 envelope = build_envelope(
                     verdict, raw, offset=message.offset(), partition=message.partition()
                 )
                 producer.produce(TRADES_QUARANTINE, key=envelope.key, value=envelope.to_json())
-            else:
+            elif verdict.record is not None or not verdict.is_quarantine:
+                # Gates on → valid frames only. Gates off → every decodable frame flows to valid
+                # (a malformed frame with no decoded record has nothing to route downstream).
                 producer.produce(TRADES_VALID, key=message.key(), value=raw)
 
             producer.flush(10)  # ensure the destination write lands before we commit the source
@@ -597,6 +605,7 @@ def _handle(args: Any) -> int:  # pragma: no cover - CLI over network I/O
         group_id=args.group_id,
         registry_url=args.schema_registry,
         max_messages=args.max_messages,
+        gates_off=args.gates_off,
     )
     print(json.dumps(telemetry.as_dict(), indent=2))
     return 0
@@ -621,5 +630,11 @@ def register(subparsers: Any) -> None:
         default=0,
         dest="max_messages",
         help="Stop after N messages (0 = run until interrupted).",
+    )
+    parser.add_argument(
+        "--gates-off",
+        action="store_true",
+        dest="gates_off",
+        help="Demo mode (§4): evaluate but route everything to trades.valid so the SLO breaks.",
     )
     parser.set_defaults(handler=_handle)

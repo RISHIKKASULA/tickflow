@@ -42,3 +42,11 @@ All notable changes to this project are documented here. The format follows
   and — load-bearing — no bar built from a message the gate would quarantine). `DuckDbSink` is an
   append-only single-writer local store; bar market values never leave the environment (§1 ToS).
   `tickflow bars` runs the consumer (integration lane).
+- Gates-off demo mode with the signature SLO comparison (`run_slo_experiment` in `bars.py`, the
+  first-class `--gates-off` flag on `tickflow gate`): replay the fault-injected fixture through the
+  real gate twice. Gates ON → zero SLO violations; gates OFF → K > 0 violated bars (dominated by
+  the `no_quarantinable` invariant plus corrupted extremes) — the thesis made visible. Bit-identity
+  is checked on the catchable fault subset (designed-miss dups filtered out) against the manifest's
+  ground-truth valid projection; the designed misses are surfaced as the R3 recall gap, not hidden.
+  ADR-002 records why the reference is the valid projection, not the raw clean fixture (the injector
+  replaces in place and its boundary controls alter values by design).

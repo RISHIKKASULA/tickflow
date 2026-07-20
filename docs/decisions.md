@@ -70,3 +70,65 @@ or stalled feed, not to enforce a volume target.
   contract + Schema Registry wiring.
 - Captured market data remains local and gitignored (Coinbase/Kraken ToS, §1); this ADR cites
   the capture by checksum, not by committing it.
+
+## ADR-002 — The §4 bit-identity reference is the ground-truth valid projection, not the raw clean fixture
+
+**Status: ACCEPTED (2026-07-19). A clarification of §4, not a change to the SLO thesis.**
+
+### Context
+
+Frozen §4 states the signature experiment as: replay the fault-injected fixture with gates ON and
+the resulting bars must be **bit-identical to bars built from the clean fixture**. Building the
+gates-ON/OFF experiment (Day C commit 2) surfaced that this literal wording cannot hold with the
+Day-B fault injector as frozen, for two structural reasons — both deliberate features of that
+injector, not defects:
+
+1. **The injector replaces in place.** A malformed / out-of-range / out-of-order fault *overwrites*
+   the clean record at its index (it is not an extra frame). The gate correctly quarantines it, so
+   that index contributes **nothing** to the valid stream — whereas the clean fixture has a real
+   trade there. Gates-ON bars are therefore missing those trades relative to the clean fixture.
+2. **Boundary controls alter values but stay valid.** The `out-of-range` in-range controls set a
+   price to the exact symbol bound (e.g. BTC $1,000) and the `out-of-order` controls shift
+   `ts_event` by 4.9 s / 5.0 s. These route valid *by design* (they probe the inclusive edge), but
+   they carry different values than the clean record they replaced, so they perturb their bar.
+
+Empirically (4 streams × 300, LRU 100): 22 of 189 gates-ON bars differ from the raw clean-fixture
+bars. So `gates_on_digest == clean_fixture_digest` is simply **False**, and "fixing" it would mean
+deleting the boundary controls and the designed-miss dups — the exact §5 features that keep the
+Day-C recall numbers honest. That is not on the table (STATE.md phase-2 carry-forward says so).
+
+### Decision
+
+**The bit-identity reference for the faulted stream is the manifest's ground-truth _valid
+projection_, not the raw clean fixture.** The valid projection is: decode every emitted frame the
+injection manifest marks `expected_disposition = valid` (controls as-emitted + untouched clean),
+excluding the designed-miss duplicates (`detectable = False`), and build bars from it. A correct
+gate routes exactly this set to `trades.valid`, so the claim becomes precise and strong:
+
+- **Catchable-subset bit-identity (the §4 claim, made exact).** With designed misses filtered out,
+  `bars_digest(gates_on_bars) == bars_digest(expected_valid_projection_bars)`, byte-for-byte. This
+  proves the gate routes *exactly* per the ground truth and the bar builder is deterministic. It is
+  checked in `run_slo_experiment` and asserted in `tests/test_slo_experiment.py`.
+- **Clean-input reconstruction (the literal §4 wording, where it does hold).** Feeding the *clean*
+  fixture through the gate routes everything valid with zero SLO violations and reproduces the
+  clean-fixture bars exactly (`test_clean_fixture_passes_the_gate_with_no_slo_violations`). This is
+  the honest form of "clean data → clean bars": it is the clean *input*, not the faulted input,
+  that reconstructs the clean bars.
+- **Designed misses reported, never hidden.** The dups past the LRU window are surfaced as
+  `SloComparison.designed_miss_dups` and drag R3 recall below 100 % in the metrics phase (§6). They
+  are the frozen point that keeps recall informative, not a number to launder away.
+
+The SLO thesis itself is unaffected and is measured over the **full** faulted stream (designed
+misses included, because they are real uncatchable duplicates): gates ON → zero SLO violations;
+gates OFF → `K > 0` violated bars, dominated by the `no_quarantinable` invariant plus corrupted
+extremes. That ON/OFF table is the README's opening evidence and stands exactly as §4 intends.
+
+### Consequences
+
+- No change to the frozen injector, the fixture pins, or the rule set; this is a reference-choice
+  clarification recorded so the README's bit-identity language is precise and defensible.
+- The README will state the claim as "gates-ON bars are bit-identical to the ground-truth valid
+  projection; clean input reconstructs the clean bars" — and will show the designed-miss R3 recall
+  gap next to it, per the truth-only brand (§6).
+- Revisitable only by an injector redesign (additive faults instead of replace-in-place), which is
+  a larger change deferred past v0.1; the current form is the simplest defensible choice.
