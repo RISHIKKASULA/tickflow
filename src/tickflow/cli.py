@@ -2,8 +2,8 @@
 
 Subcommands are registered here and delegate to focused modules. Day A wires the ingester
 (`tickflow ingest`); Day B adds the contract, the quality gate (`tickflow gate`), and the
-synthetic fixture (`tickflow fixture`); replay, bars, metrics, and export land in later phases
-per the frozen build order (docs/architecture.md §11).
+synthetic fixture (`tickflow fixture`); Day C adds the bar builder (`tickflow bars`); replay,
+metrics, and export land in later phases per the frozen build order (docs/architecture.md §11).
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ from __future__ import annotations
 import argparse
 from collections.abc import Sequence
 
-from tickflow import __version__, capture, contracts, fixture, gate, ingest, sanity
+from tickflow import __version__, bars, capture, contracts, fixture, gate, ingest, sanity
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -27,6 +27,7 @@ def build_parser() -> argparse.ArgumentParser:
     contracts.register(subparsers)
     gate.register(subparsers)
     fixture.register(subparsers)
+    bars.register(subparsers)
     return parser
 
 

@@ -33,3 +33,12 @@ All notable changes to this project are documented here. The format follows
   grades detection precision/recall against. Boundary faults are deliberate: values exactly on
   the inclusive range bound, 4.9 s vs 5.0 s vs 5.1 s skews, and duplicates at the exact LRU-window
   edge (lru−1 keys back → caught vs lru back → designed miss). `tickflow fixture generate/verify`.
+- Downstream bar builder with SLO checker and DuckDB sink (`src/tickflow/bars.py`): the §4
+  "gates earn their keep" consumer. `BarBuilder` folds `trades.valid` into 1-minute OHLCV bars
+  per (exchange, symbol) keyed off the event-time watermark — fully order-independent (open/close
+  by (ts_event, trade_id), high/low by max/min, volume summed in integer micro-units) so replayed
+  bars are bit-identical regardless of delivery order. `check_slo` enforces the frozen invariants
+  (high ≥ low, open/close within [low, high], volume > 0, positive prices, monotone bar timestamps,
+  and — load-bearing — no bar built from a message the gate would quarantine). `DuckDbSink` is an
+  append-only single-writer local store; bar market values never leave the environment (§1 ToS).
+  `tickflow bars` runs the consumer (integration lane).
