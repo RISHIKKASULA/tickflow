@@ -1,8 +1,9 @@
 # STATE
 
-Build order and current status for tickflow. **Released v0.9 on 2026-07-20** (ADR-003 slip
-valve pulled; v0.1.0 reserved for the release that lands the quarantine/replay CLI). The frozen
-design lives in
+Build order and current status for tickflow. **v0.9 is SHIPPED AND CLOSED (2026-07-20)** — see
+[v0.9 — SHIPPED AND CLOSED](#v09--shipped-and-closed-2026-07-20) for what shipped, what was cut,
+and the verified numbers. ADR-003 pulled the §11 slip valve; v0.1.0 is reserved for the release
+that lands the quarantine/replay CLI. The frozen design lives in
 [docs/architecture.md](docs/architecture.md); decisions and deviations in
 [docs/decisions.md](docs/decisions.md).
 
@@ -350,6 +351,82 @@ v0.1.0 is reserved for the release that lands 1–3.
 | README numbers | cross-checked against `site/telemetry.json` programmatically, 0 mismatches |
 | dashboard | parsed, no unclosed tags, no JS, no external assets, no cadence claim |
 | telemetry-only | `assert_telemetry_only` + independent grep, on the built artifact |
+
+## v0.9 — SHIPPED AND CLOSED (2026-07-20)
+
+**tickflow v0.9 is released, pushed, and closed. No work is in progress.** Tags `v0.9`
+(`6fd31b6`) and `v0.9.1` (`e556a19`, release-gate interpreter fix) are pushed and unmoved.
+`main` is in sync with origin; `ci` and `pages` are green on the same commit; the dashboard is
+live at <https://rishikkasula.github.io/tickflow/> (HTTP 200). Local broker torn down, no
+containers/volumes/networks left.
+
+### What shipped
+
+The declarative gate (6 rules, R1–R4 quarantine, R5–R6 structurally alert-only), the Avro
+contract with a BACKWARD-compat registry check verified against a real broker, the seeded fixture
+generator + fault injector with its ground-truth manifest, the bar builder with the SLO checker,
+the gates-ON/OFF SLO experiment **with a CLI that regenerates it**, bootstrap-CI grading over
+both false-quarantine denominators, telemetry export with mechanically enforced ToS compliance,
+the static Pages dashboard, and the release-blocking scan as a script plus a CI job.
+
+### What was deliberately cut, and why
+
+Cut via the §11 slip valve (**ADR-003**, decided before building, not as an end-of-session
+excuse): the **quarantine inspection / replay CLI** (`tickflow quarantine` ls/show/stats,
+`tickflow replay --fixture`), its kill/restart-mid-replay exactly-once tests, the integration
+lane those enable, and the **live soak**.
+
+The reason: Day D opened with three defects in *already-published* claims — the signature SLO
+experiment had no command that produced it and had never run at fixture scale, the gates-OFF
+result was the literal placeholder `K > 0`, and the false-quarantine rate hid its 460 designed
+near-boundary controls inside a 98,800 denominator. The quarantine CLI is an inspection
+convenience over envelopes the gate already emits and faults the metrics already grade; it adds
+no measurement. Publishing a wrong number is worse than shipping one fewer command, so the
+measurement work took the session. §11 permits exactly this trade and prefers a stated v0.9 with
+a roadmap to a rushed v0.1.0.
+
+Also removed rather than caveated: the in-process gate throughput figure. It varied more than 3×
+across machines and 1.6× between two runs on the same CI runner class, so it described the runner
+rather than the gate. Nothing replaced it; tickflow makes no performance claim.
+
+### Verified headline numbers
+
+All from the **committed fixture: `trades.v1.clean.parquet`, 100,477 frames, seed 42,
+LRU 10,000, out-of-order tolerance 5,000 ms**. Fixture-scale, not live-traffic. Regenerate every
+figure below with `tickflow export` (or `tickflow slo` / `tickflow metrics` individually); the
+artifact is `site/telemetry.json` and CI fails if the committed copy drifts from it.
+
+| measure | value | source |
+|---|---|---|
+| gates ON | 0 of 15,061 bars violated | `slo.gates_on` |
+| gates OFF | 1,076 of 15,061 bars violated | `slo.gates_off` |
+| gates-OFF breakdown | `no_quarantinable` 1,076, `price_positive` 144 | `slo.gates_off.counts_by_invariant` |
+| bit-identity (catchable subset) | holds; 76 designed-miss dups reported | `slo.bit_identical` |
+| recall R1 / R2 / R4 | 1.0000 [1.0000, 1.0000], n = 400 each | `grade.per_class` |
+| recall R3 (duplicate) | **0.8407 [0.8071, 0.8721]**, n = 477 | `grade.per_class` |
+| precision, all rules | 1.0000 [1.0000, 1.0000] | `grade.per_class` |
+| false quarantine, all controls | 0.0000, n = 98,800 | `grade.false_quarantine_rate.all_controls` |
+| false quarantine, near-boundary | 0.0000, n = 460 | `grade.false_quarantine_rate.near_boundary_controls` |
+| completeness | 100,477 accounted for exactly once (98,876 valid / 1,601 quarantined, 0 loss) | `grade.completeness` |
+
+Read with their caveats, which are stated in the README and not softened here: R1/R2/R4 recall is
+~100% *by construction* because the rules are deterministic; R3 is below 100% *by construction*
+because the injector plants duplicates no finite-memory deduplicator can catch; and the
+zero-rate CIs are degenerate — a percentile bootstrap over a zero-event sample cannot see events
+it never observed, so the honest ceiling is the rule of three, ≈3/n.
+
+### If work resumes
+
+Nothing below is started, and none of it is blocking.
+
+1. **Node 20 action deprecations.** `actions/checkout@v4`, `actions/upload-artifact@v4`,
+   `astral-sh/setup-uv@v5`, and `actions/deploy-pages@v4` are being force-run on Node 24 and warn
+   on every run. Warnings only today; bump before it becomes an error.
+2. **The deferred quarantine / replay CLI** (`quarantine.py`), then the kill/restart-mid-replay
+   exactly-once completeness proof, then switching on the `if: false` integration lane in
+   `ci.yml`. That sequence is what v0.1.0 is reserved for.
+3. **Live soak** on real Coinbase + Kraken feeds. Soak telemetry may publish; soak market data
+   may not. No live-soak number is published anywhere today.
 
 ## Local environment notes
 
