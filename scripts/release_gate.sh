@@ -52,8 +52,16 @@ else
   echo "[gate]   ok - none outside the policy-defining files"
 fi
 if [ -n "$policy_hits" ]; then
-  echo "[gate]   noted (policy text, exempt by path - review, do not ignore):"
-  printf '%s\n' "$policy_hits" | sed 's/^/    /'
+  # The doc hits are listed in full -- that is a real document whose wording deserves review.
+  # This script's own hits are pure self-reference (it contains the search pattern), so they are
+  # reported as a count: printing them buries the actual verdict under the pattern definition.
+  doc_hits=$(printf '%s\n' "$policy_hits" | grep -v '^scripts/release_gate\.sh:')
+  self_count=$(printf '%s\n' "$policy_hits" | grep -c '^scripts/release_gate\.sh:')
+  if [ -n "$doc_hits" ]; then
+    echo "[gate]   noted (policy text, exempt by path - review, do not ignore):"
+    printf '%s\n' "$doc_hits" | sed 's/^/    /'
+  fi
+  echo "[gate]   noted: $self_count self-references in this script (it contains the pattern)"
 fi
 
 echo "[gate] scanning git log (subjects and bodies)..."
@@ -87,18 +95,47 @@ fi
 
 # The programmatic check is the authority; the grep above is a second, independent pass that can
 # also catch a value smuggled in as page text rather than as a structured field.
+#
+# Interpreter resolution matters here. A bare `python` picks up whatever is first on PATH, which
+# on a developer machine is usually a system Python with none of this project's dependencies --
+# so the import fails, and the check reports a ToS violation that did not happen. Resolve an
+# interpreter that can actually import the package, and keep "could not run the check" strictly
+# distinct from "the check failed": both block the release, but only one means a leak.
+find_python() {
+  for candidate in "${VIRTUAL_ENV:-}/bin/python" ./.venv/bin/python python3 python; do
+    [ -n "$candidate" ] || continue
+    command -v "$candidate" >/dev/null 2>&1 || continue
+    if "$candidate" -c "import sys; sys.path.insert(0, 'src'); import tickflow.export" \
+        >/dev/null 2>&1; then
+      printf '%s' "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
 echo "[gate] re-running the programmatic telemetry-only assertion..."
 if [ -f site/telemetry.json ]; then
-  if python -c "
+  if PY=$(find_python); then
+    if "$PY" -c "
 import json, sys
 sys.path.insert(0, 'src')
 from tickflow import export
 export.assert_telemetry_only(json.load(open('site/telemetry.json')))
 print('[gate]   ok - assert_telemetry_only passed')
 "; then :; else
-    echo "[gate] FAIL: assert_telemetry_only rejected the published artifact"
+      echo "[gate] FAIL: assert_telemetry_only found market data in the published artifact"
+      fail=1
+    fi
+  else
+    echo "[gate] ERROR: no interpreter available that can import tickflow."
+    note "The programmatic telemetry-only check did NOT run. This is an environment problem,"
+    note "not a detected leak. Activate the venv or use 'uv run bash scripts/release_gate.sh'."
+    note "Blocking anyway: an unrun check is not a passed check."
     fail=1
   fi
+else
+  echo "[gate]   skip - no site/telemetry.json"
 fi
 
 # ---------------------------------------------------------------------------------------------
