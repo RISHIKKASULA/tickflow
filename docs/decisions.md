@@ -196,3 +196,98 @@ thesis.
   results only, each labeled with the fixture that produced it.
 - Roadmap, unchanged in substance from §12: quarantine inspection + replay CLI, the kill/restart
   exactly-once completeness proof, the integration lane, then live soak.
+
+## ADR-004 — Throughput removed, latency never shipped (§6, §8, §14)
+
+**Status: ACCEPTED (2026-07-21).** Records a deviation from three frozen sections that the
+CHANGELOG, README, and STATE describe at length but no ADR had captured. §"Deviations require
+an ADR in `docs/decisions.md`" makes this entry mandatory, not optional.
+
+### Context
+
+Frozen §6 requires "**Throughput** (msgs/s sustained through the gate) and **e2e latency**
+p50/p95/p99 (ts_ingest → gate emit), `bench` profile only", §6 also requires "every proportion
+and every latency percentile carries a **bootstrap 95% CI**", §8 puts "throughput/latency (with
+environment disclosure line)" on the dashboard, and §14 makes "every P/R, completeness, and
+latency number carries a 95% CI + full provenance" an acceptance criterion.
+
+Neither ships. Latency was never implemented — no measurement of `ts_ingest → gate emit` exists
+in `src/` or `tests/` at any commit. Throughput was implemented, published in v0.9 and v0.9.1,
+and then removed on `main`.
+
+### Decision
+
+Publish no performance figure at all.
+
+Throughput measured ~230,000 msg/s on Apple silicon, 124,819 on one CI runner, and 76,071 on
+another: more than 3x across machines, and 1.6x between two runs on the same CI runner class.
+A number whose spread across runners exceeds any difference it could reveal about the gate
+describes the runner, not the gate. Caveating it would have kept a figure readers would quote
+without the caveat.
+
+Latency is worse, not better. §6 scopes it to the `bench` profile — a Redpanda broker in
+Docker — and ADR-003 cut the integration lane that would have exercised it. In-process,
+`ts_ingest → gate emit` measures function-call overhead on the machine that happens to be
+running, with the same runner-dependence throughput showed and no broker in the path to make
+it meaningful. A p99 from that setup would be precision without accuracy.
+
+### Consequences
+
+- §6, §8, and §14's performance clauses are not met and will not be met at this scope. §14's
+  "every latency number carries a 95% CI" is now vacuous rather than satisfied: there are no
+  latency numbers.
+- The telemetry artifact is fully deterministic apart from its provenance stamps, which CI
+  asserts. That determinism is a direct consequence of having no wall-clock value in it.
+- `measure_throughput`, the `throughput` key, the dashboard row and caption, the README row,
+  and the asserting tests are gone from `main`. **Tags `v0.9` and `v0.9.1` still ship them**;
+  the removal is unreleased.
+- If a performance claim is ever wanted, it needs the `bench` profile actually running in a
+  pinned environment, not an in-process proxy — which is roadmap work behind the same lane
+  ADR-003 cut.
+
+## ADR-005 — Published metrics come from an in-process replay, not a broker (§7, §10)
+
+**Status: ACCEPTED (2026-07-21).** Records that the §7 system-of-record pipeline was replaced
+wholesale. Like ADR-004, this is a deviation the docs describe and no ADR captured.
+
+### Context
+
+Frozen §7 specifies: "**System of record = GitHub Actions.** The metrics workflow: verify
+fixture checksum → start Redpanda (`bench`) in Docker on `ubuntu-latest` → replay faulted
+fixture → grade against manifest → bootstrap CIs → export telemetry JSON → deploy dashboard to
+Pages." §"`bench`" is named "the only profile CI publishes metrics from".
+
+What runs is `ci.yml`'s `metrics` job and `pages.yml`, both of which state plainly that
+"everything here runs in-process against the committed, checksum-pinned fixture. No broker is
+started." The `redpanda-bench` service in `docker-compose.yaml` is referenced by no workflow,
+no script, and no source file.
+
+### Decision
+
+Keep the in-process replay as the system of record; do not stand up a broker in CI.
+
+The published numbers are detection precision/recall, false-quarantine rates, completeness,
+and the gates-ON/OFF SLO comparison. Every one is a property of the rules engine evaluating
+frames against a pinned fixture. None depends on delivery semantics, partitioning, consumer
+groups, or commit behaviour — the things a broker would add. Replaying the same committed
+parquet through the same `RulesEngine` yields identical verdicts with or without Redpanda in
+front of it, which is why the drift check can assert byte-identity on the artifact at all.
+
+A broker in the metrics path would add a Docker service, a readiness wait, and a class of
+flake (topic creation, rebalance timing) to a job whose output is required to be
+deterministic — in exchange for no change in any published figure.
+
+### Consequences
+
+- §7's pipeline description is superseded by this entry. `bench` is not the profile CI
+  publishes from; `in-process (no broker)` is, and every artifact records that in its
+  `profile` stamp.
+- §10's kill/restart and duplicate-delivery properties remain unproven, as ADR-003 already
+  recorded when it cut the integration lane. `metrics.Completeness` therefore reports
+  `duplicate=0` as an assigned constant, not a measurement — the one place where an
+  in-process system of record is weaker than the frozen design, and it should be read that
+  way until the lane exists.
+- `docker-compose.yaml`'s `bench` profile stays for local use and for the roadmap work; it is
+  currently exercised by nothing.
+- §9's workflow layout names `metrics.yml`; the function lives in a `metrics` job inside
+  `ci.yml` plus `pages.yml`. Same work, different files.

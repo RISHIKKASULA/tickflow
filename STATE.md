@@ -354,8 +354,10 @@ v0.1.0 is reserved for the release that lands 1–3.
 
 ## v0.9 — SHIPPED AND CLOSED (2026-07-20)
 
-**tickflow v0.9 is released, pushed, and closed. No work is in progress.** Tags `v0.9`
+**tickflow v0.9 is released and pushed.** Tags `v0.9`
 (`6fd31b6`) and `v0.9.1` (`e556a19`, release-gate interpreter fix) are pushed and unmoved.
+Post-tag work has since landed on `main` and is unreleased — see [Unreleased] in the
+CHANGELOG; the throughput removal below is part of it and is **not** in either tag.
 `main` is in sync with origin; `ci` and `pages` are green on the same commit; the dashboard is
 live at <https://rishikkasula.github.io/tickflow/> (HTTP 200). Local broker torn down, no
 containers/volumes/networks left.
@@ -387,7 +389,8 @@ a roadmap to a rushed v0.1.0.
 
 Also removed rather than caveated: the in-process gate throughput figure. It varied more than 3×
 across machines and 1.6× between two runs on the same CI runner class, so it described the runner
-rather than the gate. Nothing replaced it; tickflow makes no performance claim.
+rather than the gate. Nothing replaced it; tickflow makes no performance claim. This removal
+landed **after** v0.9.1 and is unreleased — both tags still ship the figure. Recorded as ADR-004.
 
 ### Verified headline numbers
 

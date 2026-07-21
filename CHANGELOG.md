@@ -15,7 +15,9 @@ All notable changes to this project are documented here. The format follows
   spread exceeds any difference it could reveal describes the runner, not the gate, so it was
   removed rather than caveated. **Nothing replaced it**; tickflow makes no performance claim.
   Side effect: with the only wall-clock value gone, the telemetry artifact is now fully
-  deterministic apart from its provenance stamps, and CI asserts that.
+  deterministic apart from its provenance stamps, and CI asserts that. This removal is
+  unreleased: tags `v0.9` and `v0.9.1` still ship the `throughput` key in
+  `site/telemetry.json`.
 
 ## [0.9.0] - 2026-07-20
 
@@ -23,7 +25,7 @@ Stated v0.9, not v0.1.0: the quarantine-inspection/replay CLI and the live soak 
 frozen design's slip valve so the measurement work could be done properly (ADR-003). The gate,
 the SLO experiment, and the CIs -- the parts the valve may never touch -- all ship.
 
-### Added
+### Added — release work (Day D)
 - `tickflow slo`: a CLI surface for the gates-ON/OFF SLO experiment over the committed 100k
   fixture. Previously reachable only as a library call from the test helpers against a 4x300
   small config, so the signature §4 result had never been produced at the scale the docs quote.
@@ -38,7 +40,7 @@ the SLO experiment, and the CIs -- the parts the valve may never touch -- all sh
 - `fixture_label` provenance stamps on every SLO and grade result, derived from the manifest and
   the live rules config, so no published number can be confused for a different fixture's.
 - Gate throughput and a provenance stamp (commit SHA, fixture pins, runner, profile, timestamp)
-  in every metrics artifact.
+  in every metrics artifact. (Throughput was removed after this release; see [Unreleased].)
 - `scripts/release_gate.sh` + a `release-gate` CI job: the release-blocking scan for
   third-party-affiliation references and market-data-derived export, over both tracked files and
   the full commit history.
@@ -62,7 +64,7 @@ the SLO experiment, and the CIs -- the parts the valve may never touch -- all sh
   (v24.2.7) for the first time, including that `check` correctly fails with exit 1 on a
   BACKWARD-breaking change.
 
-### Added
+### Added — build arc (Days A–C)
 - Package scaffold, tooling (uv, ruff, mypy, pytest + coverage, pre-commit), and CI skeleton.
 - docker-compose Redpanda stack with `dev` and `bench` profiles.
 - Exchange ingesters (Coinbase primary, Kraken secondary) normalizing both venues to the

@@ -3,8 +3,13 @@
 This module is the only thing allowed to produce a *published* artifact, and it exists because of
 one hard constraint (§1, Coinbase/Kraken ToS, release-blocking): **tickflow may publish how its
 pipeline behaved, never what the market did.** Counts, rates, confidence intervals, verdict labels,
-digests, and timings may leave the machine. A price, a bar's open/high/low/close, a volume, a
+and digests may leave the machine. A price, a bar's open/high/low/close, a volume, a
 vwap, a mid — may not, in any form, including "derived" or "aggregated" forms.
+
+No timing is published either. The ToS boundary would permit one, but the only figure this
+pipeline could measure in-process varied by more than 3x across machines, so it was removed
+rather than caveated; latency was never shipped. See the dashboard's completeness note and
+ADR-004.
 
 That rule is enforced here mechanically rather than by review, because review is exactly what
 fails at 2am on release day:
@@ -292,7 +297,7 @@ its checksum alone.</p>
 <p class="sub">Last refreshed <strong>{esc(prov["generated_at"])}</strong>.</p>
 
 <div class="banner"><strong>Pipeline telemetry only.</strong> This page publishes how the gate
-behaved &mdash; counts, rates, confidence intervals, verdict labels, timings. It publishes no
+behaved &mdash; counts, rates, confidence intervals, and verdict labels. It publishes no
 market data: no prices, no derived market values, and no OHLCV bar values, here or in
 <code>telemetry.json</code>. That is enforced mechanically at export time, not by review.</div>
 
