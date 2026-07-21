@@ -1,6 +1,8 @@
 # STATE
 
-Build order and current status for tickflow v0.1. The frozen design lives in
+Build order and current status for tickflow. **Released v0.9 on 2026-07-20** (ADR-003 slip
+valve pulled; v0.1.0 reserved for the release that lands the quarantine/replay CLI). The frozen
+design lives in
 [docs/architecture.md](docs/architecture.md); decisions and deviations in
 [docs/decisions.md](docs/decisions.md).
 
@@ -262,51 +264,103 @@ claims; the quarantine CLI is a convenience over data the gate already emits and
 already grade. Publishing a wrong number is worse than shipping one fewer command, so the
 measurement work wins the session and the CLI slips to the roadmap.
 
-## What Day D does  ← **IN PROGRESS**
+## Day D — COMPLETE. Released v0.9.
 
-Day D publishes the evidence and ships v0.9 (frozen §7/§8/§11/§14). In order:
+Day D published the evidence and shipped (frozen §7/§8/§11/§14). Toolchain green throughout:
+ruff, mypy strict, **181 tests, core coverage 100%** (export.py added at 100%).
 
-1. **`feat: add telemetry export with schema enforcement`** — `export.py`: write only fields
-   declared in `telemetry_schema.json` (counts, rates, latencies, verdicts, timestamps). The
-   grade/SLO/telemetry payloads already added in Day C are telemetry-only by construction (a test
-   already asserts no market-field keys, allowing `ci_low`/`ci_high`); Day D makes the allowlist a
-   **release-blocking** enforcement — a smuggled `price`/`open`/`high`/`low`/`close`/`volume`/`vwap`
-   field fails the build (§8, ToS §1). The provenance stamp (commit SHA, fixture + manifest
-   checksums, compose profile, runner spec, timestamps) is added to every metrics artifact (§6).
-2. **`feat: add metrics workflow and Pages dashboard`** — `metrics.yml` (broker-based, `bench`
-   profile, cron+manual): verify fixture checksum → start Redpanda → replay → grade → bootstrap →
-   export telemetry JSON → deploy `site/` to Pages. **Dashboard is PIPELINE TELEMETRY ONLY, never
-   price charts** (Coinbase ToS, release-blocking): the gate P/R table with CIs per fault class
-   (surfacing the R3 designed-miss recall gap next to the perfect classes), completeness,
-   throughput/latency with the environment-disclosure line, quarantine rate by rule, the
-   gates-ON/OFF SLO comparison, the live-soak section (labeled), and a "last successful refresh"
-   timestamp (never a cadence claim). Plain HTML/CSS + one committed JSON — no JS frameworks, no
-   price/open/high/low/close/volume/vwap anywhere.
-3. **`feat: add quarantine inspection and replay CLI`** (deferred from Day C) — `quarantine.py`:
-   `tickflow quarantine` ls/show/stats over the envelopes the gate emits + `tickflow replay
-   --fixture`. Then replay-determinism + completeness (**kill/restart the gate consumer mid-replay
-   → exactly-once accounting**) tests green; this is what enables the currently-`if: false`
-   integration lane in `ci.yml` (mini-fixture → replay → gate → bars → grade → export, E2E < 5 min
-   against a real Redpanda). Slip-valve droppable for a v0.9 if Day D overruns.
-4. **Live soak on the M4** (overnight-capable, real Coinbase+Kraken): reconnects, gaps, real
-   divergence alerts, uptime/completeness telemetry — labeled "measured on Apple M4 … not
-   independently reproducible" (§7). Soak telemetry may publish; soak market data may not.
-5. **`test: complete coverage to gate`** — close any remaining core-coverage gaps to the ≥ 85 %
-   frozen bar (currently 100 % on the built core).
-6. **`docs: write README with measured results`** — numbers + CIs from the real metrics artifact;
-   the three verified gap citations (Confluent clause, Grab, DEW) load-bearing; incident references
-   hedged as motivation only; full limitations section (synthetic fixture, `bench`/fsync caveat,
-   deterministic-rules recall scope, single-node, at-least-once, `double` not decimal, telemetry-
-   only dashboard, best-effort cron refresh). State the bit-identity claim per ADR-002.
-7. **Release grep gate** — release-blocking scan over README, docs/, src/, site/, and the git log:
-   zero third-party-affiliation references **and** zero market-data-derived export.
-8. **`chore: release v0.1.0`** — tag once §14 acceptance criteria all pass. (Verify the checkpoint
-   rule at first push; never change a GitHub setting to work around a problem — surface it.)
+1. **`feat: add a CLI surface for the gates-ON/OFF SLO experiment` — DONE.** The §4 signature
+   result had no command that produced it: `run_slo_experiment` was reachable only as a library
+   call from the test helpers, on a 4 × 300 small config with a 100-key LRU. Added `tickflow slo`
+   (verify pins → inject → compare → print/write JSON, **exit non-zero if the thesis fails**, so
+   it is a check and not a report), and `tickflow metrics` now emits one artifact with both
+   blocks: `{"grade": …, "slo": …}`. `fixture_label` stamps every result with frame count, seed,
+   LRU size, and tolerance, derived from the manifest and live config, so a small-config number
+   can never be mistaken for a committed-fixture number.
+2. **`docs: replace the K > 0 placeholder with the measured counts` — DONE.** Measured at
+   fixture scale and written into all four sites (STATE, `bars.py` ×2, ADR-002, plus the
+   changelog and the SLO test docstring). Recorded that per-invariant counts can exceed the
+   violated-bar count, so 1,220 violations over 1,076 bars does not read as inconsistent. The
+   tests still assert **shape, not magnitude** — pinning a measured count in a test turns a
+   measurement into a self-referential constant.
+3. **`feat: split false-quarantine into all-controls and near-boundary` — DONE.** Both
+   denominators, each with its own n and CI, in the telemetry JSON and the printed table:
+   **0/98,800** all controls and **0/460** near-boundary. Manifest accounting re-derived from the
+   injector rather than trusted (table above; every line checked out). Also documented the
+   degenerate-interval caveat, because it cuts against us: a percentile bootstrap over a
+   zero-event sample returns `[0, 0]`, an artifact of the method at the boundary, not proof the
+   rate is zero — the honest ceiling is the rule of three, ≈3/n, which is ~200× looser on 460
+   controls than on 98,800.
+4. **Schema registry verified locally — DONE.** First time outside CI. All four checks pass,
+   including the load-bearing one: `check` correctly **fails with exit 1** on a BACKWARD-breaking
+   contract. Full result in the section above.
+5. **`feat: add telemetry export with schema enforcement and Pages dashboard` — DONE.**
+   `export.py` + `tickflow export` + `.github/workflows/pages.yml`. Telemetry-only is enforced
+   **mechanically** (`assert_telemetry_only` walks the payload and raises on any market-data field
+   name at any depth; both `build_telemetry` and `render_html` call it; CI re-checks the built
+   artifact). Exact-name matching, deliberately — `price_positive` / `high_ge_low` are SLO labels
+   and `ci_low` / `ci_high` are CI bounds, and a substring rule would reject them and train the
+   next person to weaken the check. Page is static HTML, **no JavaScript, no external assets**,
+   rendered from the committed `site/telemetry.json`. Says "last refreshed <timestamp>", never a
+   cadence; CI fails the build if a cadence claim appears. Caught and fixed a silent provenance
+   bug on the way: the fixture pin was read as `content_digest` while `fixtures.yaml` spells it
+   `content_sha256`, so it defaulted to `""` and shipped blank — missing pins now raise.
+6. **`docs: write README with measured results` — DONE.** Every number traced to
+   `site/telemetry.json` with its JSON path, and cross-checked against the artifact
+   programmatically (0 mismatches). Leads with gates ON/OFF, reads its own perfect-recall rows
+   skeptically, quotes throughput to one significant figure because it drifts 214k–225k msg/s run
+   to run. Limitations state all four required items — dev-mode bypasses fsync so **no latency
+   claim is made anywhere**; fixtures are synthetic and no captured real data is ever committed;
+   designed-miss dups pull R3 recall below 100% by construction; SLO numbers are fixture-scale,
+   not live-traffic — plus single-node, at-least-once, `double` not decimal, and best-effort
+   refresh. Added an explicit "what v0.9 does not ship" section. All internal links verified.
+7. **`feat: add the release-blocking scan` + `chore: release v0.9` — DONE.** The scan is now
+   `scripts/release_gate.sh` and a CI job (fetch-depth 0, since a history scan on a shallow clone
+   is theatre) rather than an instruction to run greps by hand. **Verified by planting each
+   violation class** — a reference in a tracked file, a market field in `site/telemetry.json`, a
+   cadence claim on the page — and confirming all three block. That exercise found a real bug in
+   the gate itself: `git grep -E` does not implement `\b` (it needs `-P`), so the pattern matched
+   nothing and the scan could only ever report PASS. Replaced with `git ls-files` piped to real
+   grep. The two files that legitimately contain the prohibited words because they *define* the
+   prohibition are exempt by path, and exempt hits are **printed, never skipped**, so an exemption
+   cannot become a hiding place. Gate PASSES. Tagged **v0.9**.
+
+### Not shipped in v0.9 (roadmap, in order)
+
+Cut by the ADR-003 slip valve. Nothing here is blocked; it is deferred work with a clear path:
+
+1. `quarantine.py` — `tickflow quarantine` ls/show/stats over the envelopes the gate already
+   emits, and `tickflow replay --fixture`.
+2. Replay-determinism + **kill/restart-mid-replay exactly-once** completeness tests against a
+   real broker. Completeness is currently asserted in-process only.
+3. The end-to-end integration lane in `ci.yml` (still `if: false`) — mini-fixture → replay → gate
+   → bars → grade → export against a real Redpanda, which (2) is what enables.
+4. Live soak on real Coinbase + Kraken feeds. **No live-soak number is published anywhere today.**
+
+v0.1.0 is reserved for the release that lands 1–3.
+
+### Day D verification summary
+
+| claim | how it was checked |
+|---|---|
+| manifest accounting (100,477 / 1,677 / 460 / 98,800) | re-derived from the injector, not trusted |
+| gates ON/OFF counts | `tickflow slo` on the committed fixture |
+| small-config reference (0 vs 12 of 189) | re-run and confirmed before quoting |
+| schema registry register/check | real Redpanda v24.2.7, **incl. a deliberate incompatible contract** |
+| release gate | **planted violations of all three classes**; all blocked |
+| README numbers | cross-checked against `site/telemetry.json` programmatically, 0 mismatches |
+| dashboard | parsed, no unclosed tags, no JS, no external assets, no cadence claim |
+| telemetry-only | `assert_telemetry_only` + independent grep, on the built artifact |
 
 ## Local environment notes
 
-- Redpanda `dev` profile may still be running from Day A verification:
-  `docker compose --profile dev up -d` / `... down -v`. Kafka on `localhost:19092`, Schema
-  Registry on `localhost:18081`.
-- `trades.raw` was created with 4 partitions during verification; Day B formalizes topic
-  provisioning alongside the contract.
+- Redpanda: `docker compose --profile dev up -d --wait` / `docker compose --profile dev down -v`.
+  Kafka on `localhost:19092`, Schema Registry on `localhost:18081`. Docker Desktop must be
+  running first (`open -a Docker`); Day A recorded it as unavailable, but it works on this
+  machine as of Day D.
+- **No published number requires a broker.** Everything on the dashboard and in the README is
+  produced in-process from the committed fixture, so `tickflow export` works with Docker stopped.
+  The broker is needed only for `tickflow contract register` / `check`.
+- The `dev` profile bypasses fsync. It is fine for functional verification and its timings are
+  never quoted; `bench` is the only profile from which timings could ever be published, and v0.9
+  publishes none.
