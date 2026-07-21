@@ -179,9 +179,28 @@ replay-determinism + kill/restart completeness tests. This run stopped after the
 landed, per its mandate. The gate, the SLO experiment, and the CIs — the parts the slip valve
 protects — are all shipped.
 
-## What Day D does next  ← **NEXT**
+## Day D scope decision — the §11 slip valve is PULLED (taken 2026-07-20, before building)
 
-Day D publishes the evidence and ships v0.1.0 (frozen §7/§8/§11/§14). In order:
+**Decided up front, not at the end: the quarantine-inspection/replay CLI (the original Day-C
+commit 4, deferred into Day D) is CUT. tickflow releases as v0.9, not v0.1.0.** Recorded as
+**ADR-003**.
+
+What that cut covers, exactly: `quarantine.py` (`tickflow quarantine` ls/show/stats over the
+envelopes the gate already emits, `tickflow replay --fixture`), the replay-determinism +
+kill/restart completeness tests, the live-soak section, and the still-`if: false` integration
+lane those tests would have enabled. What it does **not** touch — the parts §11 says the valve
+must never reach — the gate, the SLO experiment, and the CIs, all of which ship.
+
+Day D's own work is what it buys: the SLO experiment currently has no CLI surface and nothing
+regenerates it, the `K > 0` placeholder is still unmeasured, and `false_quarantine_rate` is
+reported only over the easy 98,800-control denominator. Those are evidence defects in shipped
+claims; the quarantine CLI is a convenience over data the gate already emits and the metrics
+already grade. Publishing a wrong number is worse than shipping one fewer command, so the
+measurement work wins the session and the CLI slips to the roadmap.
+
+## What Day D does  ← **IN PROGRESS**
+
+Day D publishes the evidence and ships v0.9 (frozen §7/§8/§11/§14). In order:
 
 1. **`feat: add telemetry export with schema enforcement`** — `export.py`: write only fields
    declared in `telemetry_schema.json` (counts, rates, latencies, verdicts, timestamps). The

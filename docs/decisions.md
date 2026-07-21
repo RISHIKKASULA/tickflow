@@ -132,3 +132,60 @@ extremes. That ON/OFF table is the README's opening evidence and stands exactly 
   gap next to it, per the truth-only brand (§6).
 - Revisitable only by an injector redesign (additive faults instead of replace-in-place), which is
   a larger change deferred past v0.1; the current form is the simplest defensible choice.
+
+## ADR-003 — The §11 slip valve is pulled: quarantine/replay CLI cut, release is v0.9
+
+**Status: ACCEPTED (2026-07-20). Taken at the start of Day D, before building, not as an
+end-of-session excuse.**
+
+### Context
+
+Frozen §11 gives Day D a slip valve: "if Day C overruns, v0.9 drops the quarantine-replay CLI
+and the live-soak section — never the gate, the SLO experiment, or the CIs. A stated v0.9 with
+roadmap beats a rushed v0.1." Day C did overrun — it stopped after the replay metrics and
+deferred its commit 4 into Day D.
+
+Day D opened with three defects in *already-published* claims, all of which outrank a new
+convenience command:
+
+1. `run_slo_experiment` — the §4 signature result — was reachable only as a library call from
+   the test helpers, on a 4 × 300 SMALL_CONFIG. No command regenerated it, so the headline
+   gates-ON/OFF comparison could not be produced from the committed fixture at all.
+2. STATE.md and `bars.py` published the gates-OFF result as the literal placeholder `K > 0`.
+   An unmeasured symbol standing where a measured count belongs.
+3. `false_quarantine_rate` was reported over all 98,800 controls. The 460 deliberately designed
+   near-boundary controls — the inclusive R2 bounds, the 4.9 s / 5.0 s skews, the exact dedup
+   window edge, the entire reason the §5 injector has boundary probes at all — were diluted into
+   an easy denominator and were invisible as a subset.
+
+### Decision
+
+**Cut the quarantine-inspection/replay CLI and the live-soak section; tag v0.9.**
+
+Dropped: `quarantine.py` (`tickflow quarantine` ls/show/stats, `tickflow replay --fixture`), the
+replay-determinism + kill/restart-mid-replay completeness tests, the live soak, and the
+`if: false` integration lane in `ci.yml` those tests would have switched on.
+
+Kept, in full: the gate, the SLO experiment (now with the CLI surface it was missing), the CIs,
+the bootstrap-CI grading, the telemetry export, and the Pages dashboard.
+
+The reasoning is a straight comparison of what each buys. The quarantine CLI is an inspection
+convenience over envelopes the gate **already emits** and faults the metrics **already grade** —
+it adds no measurement tickflow does not have. The three defects above are wrong or missing
+numbers in claims the README was about to publish. A project whose brand is "every number
+reproducible from a checksummed fixture" cannot ship `K > 0` in a docstring that calls itself
+"the README's opening evidence", and cannot report its false-positive rate over the denominator
+that flatters it while hiding the hard subset. Fixing those is not optional polish; it is the
+thesis.
+
+### Consequences
+
+- Version is **v0.9**, not v0.1.0, and the README says so with the roadmap attached — the honest
+  form §11 asks for. v0.1.0 is reserved for the release that lands the quarantine/replay CLI and
+  turns the integration lane on.
+- The integration lane stays `if: false`. The register/check path against a real broker is
+  verified out-of-band (see the Day D schema-registry verification) rather than by that lane.
+- No live-soak numbers are published anywhere. The dashboard and README carry fixture-scale
+  results only, each labeled with the fixture that produced it.
+- Roadmap, unchanged in substance from §12: quarantine inspection + replay CLI, the kill/restart
+  exactly-once completeness proof, the integration lane, then live soak.
