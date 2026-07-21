@@ -66,8 +66,42 @@ jobs:
           enable-cache: true
       - name: Install
         run: uv sync
+      # Regenerate the artifact BEFORE gating it. Without this the scan inspects the committed
+      # site/ snapshot, so a change to export.py that starts emitting a market-data field would
+      # pass here (the snapshot is still clean) and never reach pages.yml, which has no
+      # pull_request trigger -- the leak would land on main before anything caught it. Gating
+      # freshly-generated output makes this job test the current code, not a past artifact.
+      - name: Regenerate the artifact so the gate inspects current output
+        run: uv run tickflow export --profile "github-actions (in-process, no broker)"
       - name: Release gate
         run: uv run bash scripts/release_gate.sh
+      # The committed site/ is what the README links to, so it must not silently drift from what
+      # the code produces. Compared excluding throughput (wall-clock, nondeterministic by nature)
+      # and the timestamp/commit stamps; every measured quality number is deterministic and must
+      # match exactly.
+      - name: Check the committed artifact has not drifted
+        run: |
+          uv run python -c "
+          import json, subprocess, sys
+          fresh = json.load(open('site/telemetry.json'))
+          committed = json.loads(
+              subprocess.run(['git','show','HEAD:site/telemetry.json'],
+                             capture_output=True, text=True, check=True).stdout)
+          for d in (fresh, committed):
+              d.pop('throughput', None)
+              d['provenance'].pop('generated_at', None)
+              d['provenance'].pop('commit', None)
+              d['provenance'].pop('profile', None)
+              d['provenance'].pop('runner', None)
+              d['provenance'].pop('tickflow_version', None)
+          if fresh != committed:
+              print('::error::site/telemetry.json is stale - run: tickflow export')
+              for k in set(fresh) | set(committed):
+                  if fresh.get(k) != committed.get(k):
+                      print(f'  differs: {k}')
+              sys.exit(1)
+          print('committed artifact matches current code output')
+          "
 
   # Contract lane: register trades.v1 in Redpanda's Schema Registry with BACKWARD
   # compatibility and assert the local contract stays compatible (§2, §10). Needs only the
