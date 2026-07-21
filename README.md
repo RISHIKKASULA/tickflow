@@ -259,7 +259,9 @@ docker compose --profile dev up -d    # single-node Redpanda + Schema Registry
 
 `dev` and `bench` compose profiles are documented in
 [docs/architecture.md](docs/architecture.md) §3. The `dev` profile bypasses fsync and its timings
-are never quoted; no published number in this repository depends on a broker at all.
+are never quoted. **If a broker-derived number is ever published, it comes from the `bench`
+profile only** — that rule stands for the roadmap work (integration lane, soak). It is vacuous
+today: no published number in v0.9 depends on a broker at all.
 
 ## License
 
