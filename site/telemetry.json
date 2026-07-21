@@ -116,13 +116,13 @@
     "seed": 42
   },
   "provenance": {
-    "commit": "322393d4eb7f13befba6e3d428b225d2871310bc",
+    "commit": "e5e6dc4b1e6b0eb9928cae5429e42af3886a9349",
     "fixture_content_sha256": "942bd683dd7b5433efdb2c3ee1b36060c8c7b944ed1e2f10f365cf40ed1873a6",
     "fixture_parquet_sha256": "ae3cf8b5be1f5c2e9adf4faac27a560853ae3f2e3b3d803b148eee98d06fd4fe",
-    "generated_at": "2026-07-21T06:00:13Z",
+    "generated_at": "2026-07-21T06:06:51Z",
     "profile": "in-process (no broker)",
     "runner": "Darwin arm64, Python 3.12.13",
-    "tickflow_version": "0.1.0.dev0"
+    "tickflow_version": "0.9.0"
   },
   "slo": {
     "bit_identical": true,
@@ -162,8 +162,8 @@
     "thesis_holds": true
   },
   "throughput": {
-    "elapsed_s": 0.431,
-    "msgs_per_s": 233101.7,
+    "elapsed_s": 0.4367,
+    "msgs_per_s": 230100.3,
     "n_frames": 100477,
     "runner": "Darwin arm64, Python 3.12.13",
     "scope": "in-process rule engine only; no broker, network, or fsync cost included"

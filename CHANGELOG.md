@@ -6,6 +6,51 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-07-20
+
+Stated v0.9, not v0.1.0: the quarantine-inspection/replay CLI and the live soak were cut via the
+frozen design's slip valve so the measurement work could be done properly (ADR-003). The gate,
+the SLO experiment, and the CIs -- the parts the valve may never touch -- all ship.
+
+### Added
+- `tickflow slo`: a CLI surface for the gates-ON/OFF SLO experiment over the committed 100k
+  fixture. Previously reachable only as a library call from the test helpers against a 4x300
+  small config, so the signature §4 result had never been produced at the scale the docs quote.
+  Exits non-zero if the thesis does not hold, making it a check rather than a report.
+- `tickflow export`: telemetry JSON + a static, dependency-free dashboard (no JavaScript, no
+  external assets), deployed to GitHub Pages by a new `pages` workflow. Pipeline telemetry only
+  -- no prices, no derived market values, no OHLCV bar values -- enforced mechanically by
+  `assert_telemetry_only`, which raises rather than writing a market-data field.
+- False-quarantine rate split into two denominators, each with its own n and CI: all controls
+  (98,800) and the designed near-boundary controls (460), which were previously invisible inside
+  the pooled figure.
+- `fixture_label` provenance stamps on every SLO and grade result, derived from the manifest and
+  the live rules config, so no published number can be confused for a different fixture's.
+- Gate throughput and a provenance stamp (commit SHA, fixture pins, runner, profile, timestamp)
+  in every metrics artifact.
+- `scripts/release_gate.sh` + a `release-gate` CI job: the release-blocking scan for
+  third-party-affiliation references and market-data-derived export, over both tracked files and
+  the full commit history.
+
+### Changed
+- `tickflow metrics` emits one artifact containing both the grade and SLO blocks.
+- README rewritten with measured results, each traced to the telemetry JSON that generates it,
+  plus a full limitations section.
+
+### Fixed
+- The `K > 0` placeholder is gone. The gates-OFF result is measured: 0 of 15,061 bars violated
+  with gates ON, 1,076 of 15,061 with gates OFF, on the committed fixture.
+- Provenance shipped a blank fixture pin: the key was read as `content_digest` but `fixtures.yaml`
+  spells it `content_sha256`, so it silently defaulted to `""`. Missing pins now raise.
+- The release scan's first version used `git grep -E` with `\b`, which git's -E engine does not
+  implement, so it matched nothing and always passed. Replaced with `git ls-files` piped to real
+  grep and verified against planted violations.
+
+### Verified
+- `tickflow contract register` / `check` run locally against a real Redpanda Schema Registry
+  (v24.2.7) for the first time, including that `check` correctly fails with exit 1 on a
+  BACKWARD-breaking change.
+
 ### Added
 - Package scaffold, tooling (uv, ruff, mypy, pytest + coverage, pre-commit), and CI skeleton.
 - docker-compose Redpanda stack with `dev` and `bench` profiles.

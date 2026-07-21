@@ -6,4 +6,4 @@ quality claim is measured by seeded fault-injection replay in CI, with confidenc
 See docs/architecture.md for the frozen design.
 """
 
-__version__ = "0.1.0.dev0"
+__version__ = "0.9.0"

@@ -2,14 +2,28 @@
 
 from __future__ import annotations
 
+import pathlib
+
 import pytest
 
 import tickflow
 from tickflow.cli import build_parser, main
 
 
-def test_version_exposed() -> None:
-    assert tickflow.__version__ == "0.1.0.dev0"
+def test_version_exposed_and_matches_packaging() -> None:
+    """The package version and pyproject must agree.
+
+    Asserted as consistency rather than against a hardcoded literal: a pinned literal only ever
+    catches "someone forgot to edit this test", while the real failure worth catching is the two
+    sources of truth drifting apart at release time.
+    """
+    import tomllib
+
+    assert tickflow.__version__
+    pyproject = tomllib.loads(
+        (pathlib.Path(__file__).resolve().parents[1] / "pyproject.toml").read_text()
+    )
+    assert tickflow.__version__ == pyproject["project"]["version"]
 
 
 def test_parser_builds() -> None:
