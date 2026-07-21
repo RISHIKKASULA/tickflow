@@ -103,8 +103,10 @@ metrics workflow and Pages dashboard` · live soak · `test: complete coverage t
   all clean, completeness (every input accounted for exactly once). Every proportion carries a 95%
   bootstrap CI (B=10,000, seed 42, percentile; the exact `Binomial(n, k/n)/n` identity). Committed
   fixture grades to: R1/R2/R4 recall **1.0000**, R3 recall **0.8407 [0.8071, 0.8721]** (76 designed
-  misses, reported honestly), all precision **1.0000**, false-quarantine **0.0000** over 98,800
-  controls, completeness ok. In-process/no-broker, so it runs in CI's fast lane. **metrics.py 100%
+  misses, reported honestly), all precision **1.0000**, false-quarantine **0.0000** over both
+  denominators — 0/98,800 all controls **and** 0/460 designed near-boundary controls (the hard
+  subset, split out in Day D; see the verified manifest accounting below) — completeness ok.
+  In-process/no-broker, so it runs in CI's fast lane. **metrics.py 100%
   covered; whole toolchain green (ruff/mypy/pytest, 158 tests, core coverage 100%).**
 - **Day C COMPLETE (commits 1–3).** Stopped after the replay metrics per the run's mandate; the
   quarantine-inspection + replay CLI (the original Day-C commit 4) is deferred to Day D via the §11
@@ -180,13 +182,40 @@ Day C turned the gate into measured evidence (frozen §4/§6). The whole toolcha
 3. **Commit 3 — DONE.** `src/tickflow/metrics.py` + `tickflow metrics` + a `metrics` CI job:
    recall per class, precision per rule, false-quarantine, completeness, each with a 95% bootstrap
    CI. Committed-fixture numbers: R1/R2/R4 recall 1.0000, **R3 recall 0.8407 [0.8071, 0.8721]**
-   (76 designed misses, honest), precision 1.0000, false-quarantine 0.0000 / 98,800, complete.
+   (76 designed misses, honest), precision 1.0000, false-quarantine 0.0000 over both denominators
+   (0/98,800 all controls, 0/460 near-boundary), complete.
 
 **Not done (deferred to Day D by the §11 slip valve):** the original Day-C commit 4 —
 `quarantine.py` (`tickflow quarantine` ls/show/stats + `tickflow replay --fixture`) and the
 replay-determinism + kill/restart completeness tests. This run stopped after the replay metrics
 landed, per its mandate. The gate, the SLO experiment, and the CIs — the parts the slip valve
 protects — are all shipped.
+
+## Injection manifest accounting — VERIFIED 2026-07-20 (not assumed)
+
+Re-derived from the injector itself, not carried forward from notes. Regenerate with
+`tickflow metrics` (the `grade` block's `n_total` / `n_controls` / `false_quarantine_rate`).
+
+| quantity | count | how it arises |
+|---|---|---|
+| clean input rows | 100,000 | 4 streams × 25,000, the committed parquet |
+| malformed faults | 400 | replaced **in place** (100/stream) → R1 |
+| out-of-range faults | 400 | replaced in place → R2 |
+| out-of-order faults | 400 | replaced in place, 5.1 s skew → R4 |
+| duplicate faults | 477 | **added** frames: 400 immediate + 75 beyond-window + 2 window-edge → R3 |
+| **frames emitted** | **100,477** | 100,000 + 477 added dups (replacements add nothing) |
+| total faults | 1,677 | 400 + 400 + 400 + 477 |
+| **all controls** | **98,800** | 100,477 − 1,677 |
+| ├ untouched clean | 98,340 | no manifest entry at all |
+| └ **near-boundary controls** | **460** | designed, `is_fault=False`, replaced in place |
+|   ├ at inclusive R2 bound | 200 | 111 lower + 89 upper (split is seeded, not fixed) |
+|   ├ 4.9 s skew | 200 | just inside the 5.0 s R4 tolerance |
+|   └ 5.0 s skew exactly | 60 | the inclusive edge itself |
+
+The 460 are the hard subset: every one sits one representable step from a quarantine decision, so
+they are where an off-by-one in a comparison operator would surface. The other 98,340 are ordinary
+clean traffic no rule comes near. Reporting only the pooled rate would hide that distinction, so
+**both denominators are published side by side, each with its own n and CI.**
 
 ## Day D scope decision — the §11 slip valve is PULLED (taken 2026-07-20, before building)
 

@@ -155,9 +155,14 @@ def test_rigged_manifest_grades_to_the_hand_computed_table() -> None:
     assert ooo.n_faults == 0
     assert not ooo.recall.defined  # no out-of-order faults injected → n/a
 
-    # False quarantine over controls (idx 3) + untouched clean (idx 6, 7) = 1/3.
+    # False quarantine over ALL controls: designed controls (idx 3) + untouched clean (6, 7) = 1/3.
     assert report.n_controls == 3
     assert report.false_quarantine.point == pytest.approx(1 / 3)
+    # ...and over the NEAR-BOUNDARY subset alone: only idx 3 is a designed control, and it was
+    # wrongly quarantined, so the hard subset reads 1/1 while the pooled rate reads a milder 1/3.
+    near = report.false_quarantine_near_boundary
+    assert near.n == 1
+    assert near.point == 1.0
 
     assert report.completeness.ok
     assert report.completeness.n_valid == 4
@@ -214,9 +219,19 @@ def test_committed_fixture_grades_to_the_honest_numbers() -> None:
     assert dup.recall.ci_low <= dup.recall.point <= dup.recall.ci_high
     assert dup.precision.point == 1.0
 
-    # No gate over-rejection: zero false quarantine over the boundary controls + all clean.
+    # No gate over-rejection, reported over BOTH denominators (Day D). The pooled rate is the
+    # easy one -- ~98k messages no rule comes near -- so the designed near-boundary controls are
+    # graded separately: prices on the exact inclusive R2 bound, 4.9 s / 5.0 s skews against a
+    # 5.0 s tolerance, the dedup-window edge. Those are where an off-by-one would surface.
     assert report.false_quarantine.point == 0.0
     assert report.n_controls > 90_000
+
+    near = report.false_quarantine_near_boundary
+    assert near.point == 0.0
+    assert near.defined
+    # The hard subset is a small fraction of the pooled denominator -- that is the whole point of
+    # separating them. Asserted as a bound, not a pinned count, so the injector stays free to move.
+    assert 0 < near.n < report.n_controls // 100
 
 
 def test_committed_fixture_grade_requires_a_valid_fixture(monkeypatch: Any) -> None:

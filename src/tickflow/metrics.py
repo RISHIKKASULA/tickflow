@@ -11,9 +11,17 @@ these metrics exist to surface honestly are the informative parts:
   correctly drag R3 recall below 100%. That gap is the point, not a defect (§5).
 - **Detection precision, per rule** — of the messages quarantined with a rule, the fraction that
   were genuinely that rule's fault. A mislabel or a quarantined clean control counts against it.
-- **False-quarantine rate** — over the boundary controls (`is_fault=False`) *and* every untouched
-  clean message. This is where a gate that over-rejects would show up; the frozen invariant is that
-  it stays at zero.
+- **False-quarantine rate — reported over two denominators, never one.** A gate that over-rejects
+  shows up here, and the frozen invariant is that the rate stays at zero. But *all controls* —
+  every boundary control plus every untouched clean message, ~98,800 of them — is the easy
+  denominator: it is dominated by ordinary clean traffic no rule comes near, so a perfect score
+  over it is close to uninformative. The **near-boundary controls** are the hard subset and the
+  whole reason the §5 injector has boundary probes at all: prices sitting exactly on the inclusive
+  R2 bound, skews of 4.9 s and exactly 5.0 s against a 5.0 s R4 tolerance, the dedup-window edge.
+  Those are ~460 messages engineered to sit one representable step from a quarantine decision, and
+  they are where an off-by-one in a comparison operator would actually surface. Pooling them into
+  the 98,800 hides them, so both rates are reported side by side, each with its own `n` and CI —
+  and the near-boundary CI is honestly wide, because 460 is a small sample.
 - **Completeness** — every input frame accounted for exactly once across valid + quarantine (loss
   and duplicate-delivery both asserted zero, not assumed).
 
@@ -22,6 +30,15 @@ replacement, B = 10,000, seed 42, percentile interval. Resampling the mean of a 
 sample is exactly `Binomial(n, k/n) / n`, so `bootstrap_proportion_ci` uses that identity — it is
 the same distribution as item resampling, just O(B) instead of O(B·n), which matters when the
 false-quarantine denominator is ~98,000 clean messages. Report format everywhere: `point [lo, hi]`.
+
+**The degenerate-interval caveat, stated because it flatters us.** A percentile bootstrap of a
+sample containing zero events resamples zeros forever, so it returns `[0.0000, 0.0000]`. That
+interval is an artifact of the method at the boundary, **not** evidence that the true rate is known
+to be exactly zero -- the bootstrap cannot see events it never observed. Read those intervals as
+"no false quarantine in n trials"; the honest one-sided ceiling on an all-zero sample is the rule
+of three, ~3/n (~0.0065 on the 460 near-boundary controls, ~0.00003 over all 98,800). This is
+precisely why the near-boundary subset is reported with its own small `n` rather than pooled: the
+pooled denominator makes that ceiling look ~200x tighter than the hard subset actually supports.
 
 The grading here is deterministic and runs **in process** — a seeded fixture replayed through the
 real `RulesEngine`, no broker required — so it is exactly what CI's fast lane executes on every
@@ -188,6 +205,8 @@ class GradeReport:
     n_controls: int
     completeness: Completeness
     fixture: str = "unspecified fixture"
+    # The hard subset: designed near-boundary controls only (see the module docstring).
+    false_quarantine_near_boundary: Estimate = Estimate(math.nan, math.nan, math.nan, 0)
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -197,7 +216,13 @@ class GradeReport:
             "bootstrap_b": self.bootstrap_b,
             "manifest_digest": self.manifest_digest,
             "per_class": {cls: metrics.as_dict() for cls, metrics in self.per_class.items()},
-            "false_quarantine_rate": self.false_quarantine.as_dict(),
+            # Two denominators, always both. `all_controls` is boundary controls + untouched clean
+            # (the easy one); `near_boundary_controls` is the designed hard subset alone. Each
+            # carries its own n and CI inside the Estimate.
+            "false_quarantine_rate": {
+                "all_controls": self.false_quarantine.as_dict(),
+                "near_boundary_controls": self.false_quarantine_near_boundary.as_dict(),
+            },
             "n_controls": self.n_controls,
             "completeness": self.completeness.as_dict(),
         }
@@ -226,6 +251,7 @@ def grade(
     designed_miss: dict[str, int] = {cls: 0 for cls in FAULT_CLASSES}
     quarantined_correct: dict[str, list[bool]] = {rule: [] for rule in RULE_OF_CLASS.values()}
     control_quarantined: list[bool] = []
+    near_boundary_quarantined: list[bool] = []
     n_valid = 0
     n_quarantine = 0
 
@@ -247,8 +273,13 @@ def grade(
                 designed_miss[entry.fault_class] += 1
         else:
             # A boundary control (is_fault=False) or an untouched clean message: it must NOT
-            # quarantine. Both together are the false-quarantine denominator (§6).
+            # quarantine. Both together are the all-controls false-quarantine denominator (§6).
             control_quarantined.append(verdict.is_quarantine)
+            if entry is not None:
+                # A manifest entry that is not a fault is a *designed* near-boundary control —
+                # deliberately placed one step from a quarantine decision. Graded separately as
+                # the hard subset, because pooling it into the ~98k clean messages hides it.
+                near_boundary_quarantined.append(verdict.is_quarantine)
 
     per_class: dict[str, ClassMetrics] = {}
     for cls in FAULT_CLASSES:
@@ -272,8 +303,10 @@ def grade(
         )
 
     n_controls = len(control_quarantined)
-    n_false_q = sum(control_quarantined)
-    false_quarantine = bootstrap_proportion_ci(n_false_q, n_controls, b, seed)
+    false_quarantine = bootstrap_proportion_ci(sum(control_quarantined), n_controls, b, seed)
+    false_quarantine_near = bootstrap_proportion_ci(
+        sum(near_boundary_quarantined), len(near_boundary_quarantined), b, seed
+    )
 
     # In-process replay routes each frame to exactly one verdict, so loss is the only way the
     # accounting can break here (a short verdict stream); duplicate delivery is a broker/at-least-
@@ -296,6 +329,7 @@ def grade(
         n_controls=n_controls,
         completeness=completeness,
         fixture=fixture_label,
+        false_quarantine_near_boundary=false_quarantine_near,
     )
 
 
@@ -373,7 +407,9 @@ def _handle(args: argparse.Namespace) -> int:  # pragma: no cover - CLI over fil
             f"[metrics] {cls:<13} recall {class_metrics.recall.format():<26} "
             f"precision {class_metrics.precision.format()}",
         )
-    print(f"[metrics] false-quarantine {report.false_quarantine.format()}")
+    near = report.false_quarantine_near_boundary
+    print(f"[metrics] false-quarantine all controls   {report.false_quarantine.format()}")
+    print(f"[metrics] false-quarantine near-boundary  {near.format()}  <- the hard subset")
     print(f"[metrics] completeness ok={report.completeness.ok}")
     if "slo" in payload:
         slo = payload["slo"]
