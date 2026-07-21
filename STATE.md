@@ -45,8 +45,9 @@ metrics workflow and Pages dashboard` · live soak · `test: complete coverage t
   a hand-rolled Confluent Avro wire codec (magic + schema id + fastavro body, timestamps as
   `timestamp-millis`, exact round-trip), a `SchemaRegistry` REST client + `tickflow contract`
   (register/check/show), the ingester switched from JSON to Avro, and a **BACKWARD-compat CI
-  job**. Codec unit-tested (contracts.py 100%); registry/E2E is integration-lane (no broker on
-  the M4 this session — `docker` unavailable, so the live register/check is CI-verified).
+  job**. Codec unit-tested (contracts.py 100%); registry/E2E is integration-lane. **Register/check
+  verified LOCALLY against a real broker on 2026-07-20** (Day D) — see the verification below;
+  the earlier "CI-verified only, `docker` unavailable on the M4" caveat is now retired.
 - [x] Day B commit 2: declarative rules engine with quarantine routing — `contracts/rules.yaml`
   (the 6 frozen rules, declarative: every threshold/bound/disposition read from YAML) +
   `src/tickflow/gate.py` (`RulesEngine` + quarantine envelope + `tickflow gate` consumer). R1–R4
@@ -190,6 +191,31 @@ Day C turned the gate into measured evidence (frozen §4/§6). The whole toolcha
 replay-determinism + kill/restart completeness tests. This run stopped after the replay metrics
 landed, per its mandate. The gate, the SLO experiment, and the CIs — the parts the slip valve
 protects — are all shipped.
+
+## Schema registry — VERIFIED LOCALLY 2026-07-20 (previously CI-only)
+
+`tickflow contract register` / `check` had only ever executed inside CI. Day A recorded `docker`
+as unavailable on this machine, so the whole registry path was untested outside GitHub's runners.
+Docker Desktop was brought up and the `dev` profile started (`docker compose --profile dev up -d`,
+Redpanda **v24.2.7**, healthy on the second poll). All four checks pass:
+
+| check | result |
+|---|---|
+| `tickflow contract register` | **PASS** — `registered trades.raw-value (BACKWARD) as schema id 1`, exit 0 |
+| registry state after register | subject `trades.raw-value`, `compatibilityLevel: BACKWARD`, versions `[1]` |
+| `tickflow contract check` | **PASS** — `local contract is compatible with the registered latest (BACKWARD)`, exit 0 |
+| re-register (idempotency) | **PASS** — still schema id 1, still versions `[1]`; no version churn |
+| `check` vs an incompatible contract | **PASS (correctly fails)** — added a required `int` field with no default → `INCOMPATIBLE`, **exit 1** |
+
+The last row is the one that matters: a compatibility gate that only ever returns "compatible" is
+indistinguishable from a no-op. Feeding it a genuinely BACKWARD-breaking change (a required field
+with no default, so old readers cannot read new data) makes it fail with a non-zero exit, which is
+what the CI job depends on. The mutation was made to a scratch copy of `trades.v1.avsc` and
+reverted; `git status` on `contracts/` is clean.
+
+Caveat kept in the open: this was the **`dev`** profile, which bypasses fsync. It is the right
+profile for verifying *functional* correctness of register/check, and it is why **no latency or
+throughput number from this run is published anywhere**.
 
 ## Injection manifest accounting — VERIFIED 2026-07-20 (not assumed)
 
