@@ -38,7 +38,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from tickflow import contracts, fixture
+from tickflow import bars, contracts, fixture
 from tickflow.fixture import DUPLICATE, MALFORMED, OUT_OF_ORDER, OUT_OF_RANGE
 from tickflow.gate import RulesConfig, Verdict, evaluate_all, load_rules_config
 
@@ -187,9 +187,11 @@ class GradeReport:
     false_quarantine: Estimate
     n_controls: int
     completeness: Completeness
+    fixture: str = "unspecified fixture"
 
     def as_dict(self) -> dict[str, Any]:
         return {
+            "fixture": self.fixture,
             "n_total": self.n_total,
             "seed": self.seed,
             "bootstrap_b": self.bootstrap_b,
@@ -209,6 +211,7 @@ def grade(
     manifest: InjectionManifest,
     b: int = BOOTSTRAP_B,
     seed: int = SEED,
+    fixture_label: str = "unspecified fixture",
 ) -> GradeReport:
     """Grade a verdict stream against the injection manifest (frozen §6).
 
@@ -292,6 +295,7 @@ def grade(
         false_quarantine=false_quarantine,
         n_controls=n_controls,
         completeness=completeness,
+        fixture=fixture_label,
     )
 
 
@@ -312,11 +316,13 @@ def replay_and_grade(
     schema: Any,
     b: int = BOOTSTRAP_B,
     seed: int = SEED,
+    fixture_name: str = "unspecified fixture",
 ) -> GradeReport:
     """Inject faults into `clean`, replay through the real gate, and grade (frozen §5/§6)."""
     result = fixture.inject_faults(clean, config, schema, seed=seed)
     verdicts = evaluate_all(config, schema, result.frames)
-    return grade(verdicts, result.manifest, b=b, seed=seed)
+    label = bars.fixture_label(fixture_name, result.manifest, config)
+    return grade(verdicts, result.manifest, b=b, seed=seed, fixture_label=label)
 
 
 def grade_committed_fixture(
@@ -340,7 +346,14 @@ def grade_committed_fixture(
     config = config if config is not None else load_rules_config()
     schema = schema if schema is not None else contracts.load_schema()
     clean = _regroup(fixture.read_parquet(fixture.FIXTURE_PARQUET))
-    return replay_and_grade(clean, config, schema, b=b, seed=seed)
+    return replay_and_grade(
+        clean,
+        config,
+        schema,
+        b=b,
+        seed=seed,
+        fixture_name=f"committed {fixture.FIXTURE_PARQUET.name}",
+    )
 
 
 # --------------------------------------------------------------------------------------------
@@ -348,17 +361,26 @@ def grade_committed_fixture(
 # --------------------------------------------------------------------------------------------
 def _handle(args: argparse.Namespace) -> int:  # pragma: no cover - CLI over file I/O
     report = grade_committed_fixture(b=args.bootstrap_b, seed=args.seed)
-    payload = report.as_dict()
+    payload: dict[str, Any] = {"grade": report.as_dict()}
+    if not args.no_slo:
+        payload["slo"] = bars.run_committed_fixture_experiment(seed=args.seed).as_dict()
     if args.out:
-        Path(args.out).write_text(json.dumps(payload, indent=2, sort_keys=True))
+        Path(args.out).write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
     print(json.dumps(payload, indent=2, sort_keys=True))
-    for cls, metrics in report.per_class.items():
+    print(f"[metrics] fixture {report.fixture}")
+    for cls, class_metrics in report.per_class.items():
         print(
-            f"[metrics] {cls:<13} recall {metrics.recall.format():<26} "
-            f"precision {metrics.precision.format()}",
+            f"[metrics] {cls:<13} recall {class_metrics.recall.format():<26} "
+            f"precision {class_metrics.precision.format()}",
         )
     print(f"[metrics] false-quarantine {report.false_quarantine.format()}")
     print(f"[metrics] completeness ok={report.completeness.ok}")
+    if "slo" in payload:
+        slo = payload["slo"]
+        print(
+            f"[metrics] slo gates ON {slo['gates_on']['n_violated_bars']} violated bars "
+            f"/ gates OFF {slo['gates_off']['n_violated_bars']} of {slo['gates_off']['n_bars']}"
+        )
     return 0
 
 
@@ -376,4 +398,10 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     )
     parser.add_argument("--seed", type=int, default=SEED, help="Bootstrap + injector seed.")
     parser.add_argument("--out", default="", help="Optional path to write the telemetry JSON.")
+    parser.add_argument(
+        "--no-slo",
+        action="store_true",
+        dest="no_slo",
+        help="Skip the gates-ON/OFF SLO experiment block (grade only).",
+    )
     parser.set_defaults(handler=_handle)

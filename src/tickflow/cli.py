@@ -29,6 +29,7 @@ def build_parser() -> argparse.ArgumentParser:
     gate.register(subparsers)
     fixture.register(subparsers)
     bars.register(subparsers)
+    bars.register_slo(subparsers)
     metrics.register(subparsers)
     return parser
 

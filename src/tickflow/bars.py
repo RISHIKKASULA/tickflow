@@ -61,6 +61,7 @@ from tickflow.gate import (
     RulesConfig,
     Verdict,
     evaluate_all,
+    load_rules_config,
 )
 
 if TYPE_CHECKING:
@@ -504,6 +505,20 @@ def expected_valid_projection_bars(
     return builder.bars()
 
 
+def fixture_label(name: str, manifest: InjectionManifest, config: RulesConfig) -> str:
+    """A one-line provenance label for whichever fixture produced a number.
+
+    Every published SLO figure is fixture-scale, and the small-config numbers differ from the
+    committed-fixture numbers by design, so no number is allowed to travel without this label. It
+    is derived from the manifest and the live rules config — never typed by hand — so it cannot
+    drift away from the run it describes.
+    """
+    return (
+        f"{name}: {manifest.n_total:,} frames, seed {manifest.seed}, "
+        f"LRU {config.lru_size:,}, tolerance {config.out_of_order_tolerance_ms} ms"
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class SloComparison:
     """The gates-ON vs gates-OFF SLO result plus the catchable-subset bit-identity check (§4)."""
@@ -515,6 +530,7 @@ class SloComparison:
     reference_digest: str  # ground-truth valid projection on the catchable subset
     bit_identical: bool
     designed_miss_dups: int  # dups past the LRU window — the honest R3 recall gap (§5/§6)
+    fixture: str = "unspecified fixture"  # which fixture produced these numbers (see fixture_label)
 
     @property
     def thesis_holds(self) -> bool:
@@ -523,6 +539,7 @@ class SloComparison:
 
     def as_dict(self) -> dict[str, Any]:
         return {
+            "fixture": self.fixture,
             "n_frames": self.n_frames,
             "gates_on": self.gates_on.as_dict(),
             "gates_off": self.gates_off.as_dict(),
@@ -539,6 +556,7 @@ def run_slo_experiment(
     schema: Any,
     frames: Sequence[bytes],
     manifest: InjectionManifest,
+    fixture: str = "unspecified fixture",
 ) -> SloComparison:
     """Replay a fault-injected fixture through the real gate twice and compare (frozen §4).
 
@@ -573,7 +591,79 @@ def run_slo_experiment(
         reference_digest=reference_digest,
         bit_identical=(on_digest == reference_digest),
         designed_miss_dups=designed_miss_dups,
+        fixture=fixture,
     )
+
+
+# --------------------------------------------------------------------------------------------
+# The committed-fixture runner — the CLI/telemetry entry point for the §4 experiment.
+# --------------------------------------------------------------------------------------------
+def run_committed_fixture_experiment(
+    config: RulesConfig | None = None,
+    schema: Any | None = None,
+    seed: int | None = None,
+    verify: bool = True,
+) -> SloComparison:
+    """Run the §4 gates-ON/OFF experiment over the **committed 100k fixture** (frozen §4/§7).
+
+    Until this existed the signature experiment was reachable only as a library call from the test
+    helpers, against a 4 x 300 small config with a 100-key LRU — so the headline result could not
+    be regenerated at the scale the README quotes. This is the regenerating path: verify the
+    committed parquet's pins, replay it through the seeded injector, and run the comparison, with
+    the resulting numbers stamped with `fixture_label` so they can never be confused for the
+    small-config ones. Deterministic given (seed, config, committed fixture).
+    """
+    from tickflow import fixture as fixture_mod
+
+    if verify:
+        ok, detail = fixture_mod.verify_fixture()
+        if not ok:
+            raise ValueError(f"committed fixture failed verification: {detail}")
+    config = config if config is not None else load_rules_config()
+    schema = schema if schema is not None else contracts.load_schema()
+    seed = fixture_mod.SEED if seed is None else seed
+
+    clean: dict[tuple[str, str], list[Record]] = {key: [] for key in fixture_mod.STREAMS}
+    for record in fixture_mod.read_parquet(fixture_mod.FIXTURE_PARQUET):
+        clean.setdefault((str(record["exchange"]), str(record["symbol"])), []).append(record)
+
+    result = fixture_mod.inject_faults(clean, config, schema, seed=seed)
+    label = fixture_label(f"committed {fixture_mod.FIXTURE_PARQUET.name}", result.manifest, config)
+    return run_slo_experiment(config, schema, result.frames, result.manifest, fixture=label)
+
+
+def _handle_slo(args: argparse.Namespace) -> int:  # pragma: no cover - CLI over file I/O
+    comparison = run_committed_fixture_experiment(seed=args.seed, verify=not args.no_verify)
+    payload = comparison.as_dict()
+    if args.out:
+        Path(args.out).write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+    print(json.dumps(payload, indent=2, sort_keys=True))
+    on, off = comparison.gates_on, comparison.gates_off
+    print(f"[slo] fixture      {comparison.fixture}")
+    print(f"[slo] gates ON     {on.n_violated_bars} violated bars of {on.n_bars} (ok={on.ok})")
+    print(f"[slo] gates OFF    {off.n_violated_bars} violated bars of {off.n_bars} (ok={off.ok})")
+    for name, count in sorted(off.counts_by_invariant().items()):
+        if count:
+            print(f"[slo]   gates-OFF {name:<18} {count}")
+    print(f"[slo] bit-identical {comparison.bit_identical} (designed misses excluded)")
+    print(f"[slo] designed-miss dups {comparison.designed_miss_dups} (the R3 recall gap)")
+    return 0 if comparison.thesis_holds else 1
+
+
+def register_slo(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
+    parser = subparsers.add_parser(
+        "slo",
+        help="Run the gates-ON/OFF SLO experiment over the committed fixture (§4).",
+    )
+    parser.add_argument("--seed", type=int, default=None, help="Injector seed (default: 42).")
+    parser.add_argument("--out", default="", help="Optional path to write the SLO telemetry JSON.")
+    parser.add_argument(
+        "--no-verify",
+        action="store_true",
+        dest="no_verify",
+        help="Skip the committed-fixture checksum check (debugging only).",
+    )
+    parser.set_defaults(handler=_handle_slo)
 
 
 # --------------------------------------------------------------------------------------------

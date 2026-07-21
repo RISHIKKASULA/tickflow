@@ -20,7 +20,11 @@ with zero SLO violations and reconstructs the clean bars exactly.
 from __future__ import annotations
 
 import dataclasses
+from typing import Any
 
+import pytest
+
+from tickflow import bars as bars_mod
 from tickflow import contracts, fixture
 from tickflow.bars import (
     SLO_NO_QUARANTINABLE,
@@ -29,6 +33,7 @@ from tickflow.bars import (
     build_bars,
     check_slo,
     expected_valid_projection_bars,
+    fixture_label,
     gates_off_bars,
     gates_on_bars,
     run_slo_experiment,
@@ -150,3 +155,53 @@ def test_full_stream_gates_on_bars_are_not_clean_bars() -> None:
     on = gates_on_bars(verdicts)
     clean_bars = build_bars(fixture.flatten(fixture.generate_clean(n_per_stream=N)))
     assert bars_digest(on) != bars_digest(clean_bars)
+
+
+# --------------------------------------------------------------------------------------------
+# The committed-fixture runner — the CLI surface the experiment was missing (Day D).
+# --------------------------------------------------------------------------------------------
+def test_fixture_label_states_scale_seed_and_window() -> None:
+    """No SLO number may travel without the fixture that produced it (small != committed)."""
+    result = _injected()
+    label = fixture_label("small", result.manifest, SMALL_CONFIG)
+    assert "small" in label
+    assert f"{result.manifest.n_total:,}" in label
+    assert "seed 42" in label
+    assert "LRU 100" in label  # the small config's window, not the committed 10,000
+
+
+def test_committed_fixture_experiment_reproduces_the_thesis_at_fixture_scale() -> None:
+    """The §4 experiment over the committed 100k fixture, via the path `tickflow slo` calls.
+
+    Deliberately not asserting the exact violated-bar count: that is a measured number the CLI
+    regenerates and the docs quote, and pinning it here would turn a measurement into a
+    self-referential constant. What is asserted is the shape of the result — the thesis.
+    """
+    comparison = bars_mod.run_committed_fixture_experiment()
+
+    assert comparison.n_frames == 100_477  # manifest accounting: 100,000 clean + 477 added dups
+    assert "trades.v1.clean.parquet" in comparison.fixture
+    assert "LRU 10,000" in comparison.fixture
+
+    assert comparison.gates_on.ok
+    assert comparison.gates_on.n_violated_bars == 0
+    assert not comparison.gates_off.ok
+    assert comparison.gates_off.n_violated_bars > 0
+    assert comparison.gates_off.n_bars == comparison.gates_on.n_bars
+
+    off_counts = comparison.gates_off.counts_by_invariant()
+    assert off_counts[SLO_NO_QUARANTINABLE] > 0  # the load-bearing invariant
+    assert off_counts[SLO_PRICE_POSITIVE] > 0  # corrupted extremes from R2 faults
+    # One bar can trip several invariants, so the per-invariant total may exceed the bar count.
+    assert sum(off_counts.values()) >= comparison.gates_off.n_violated_bars
+
+    assert comparison.bit_identical
+    assert comparison.designed_miss_dups > 0
+    assert comparison.thesis_holds
+
+
+def test_committed_fixture_experiment_refuses_an_unpinned_fixture(monkeypatch: Any) -> None:
+    """The checksum is the system of record: a fixture that fails its pins produces no numbers."""
+    monkeypatch.setattr(fixture, "verify_fixture", lambda *a, **k: (False, "content_digest drift"))
+    with pytest.raises(ValueError, match="failed verification"):
+        bars_mod.run_committed_fixture_experiment()
