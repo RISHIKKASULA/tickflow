@@ -50,6 +50,25 @@ jobs:
           name: metrics
           path: metrics.json
 
+  # Release-blocking scan (§11/§14): no third-party-affiliation reference anywhere in the tracked
+  # files or the commit history, and no market-data-derived field in any published artifact. Runs
+  # on every push so a violation is caught when it lands, not at tag time. fetch-depth: 0 is
+  # required -- the history scan is meaningless against a shallow clone.
+  release-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # the scan reads the full commit history, not just the tip
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - name: Install
+        run: uv sync
+      - name: Release gate
+        run: uv run bash scripts/release_gate.sh
+
   # Contract lane: register trades.v1 in Redpanda's Schema Registry with BACKWARD
   # compatibility and assert the local contract stays compatible (§2, §10). Needs only the
   # registry, so it runs now — ahead of the full end-to-end integration lane.

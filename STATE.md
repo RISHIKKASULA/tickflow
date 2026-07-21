@@ -299,7 +299,7 @@ Day D publishes the evidence and ships v0.9 (frozen §7/§8/§11/§14). In order
    deterministic-rules recall scope, single-node, at-least-once, `double` not decimal, telemetry-
    only dashboard, best-effort cron refresh). State the bit-identity claim per ADR-002.
 7. **Release grep gate** — release-blocking scan over README, docs/, src/, site/, and the git log:
-   zero employer/internship/private-work references **and** zero market-data-derived export.
+   zero third-party-affiliation references **and** zero market-data-derived export.
 8. **`chore: release v0.1.0`** — tag once §14 acceptance criteria all pass. (Verify the checkpoint
    rule at first push; never change a GitHub setting to work around a problem — surface it.)
 
