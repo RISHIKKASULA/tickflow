@@ -10,6 +10,7 @@ the SLO invariant labels and CI bounds whose names merely *contain* market words
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -148,6 +149,36 @@ def test_estimate_may_be_null_when_undefined() -> None:
     payload = _payload()
     assert payload["grade"]["false_quarantine_rate"]["near_boundary_controls"]["point"] is None
     export.assert_telemetry_only(payload)
+
+
+def test_shell_scans_generate_their_pattern_from_the_frozenset() -> None:
+    """Neither shell scan may carry its own copy of the market-field list.
+
+    They drifted once already: pages.yml's literal was five names behind release_gate.sh's, so
+    `size`, `notional`, `ohlcv`, `bar_open` and `bar_close` were unscanned in CI. Both now
+    generate from MARKET_FIELD_NAMES; this test fails if a literal comes back.
+    """
+    pattern = export.market_key_regex()
+
+    def grep_matches(text: str) -> bool:
+        """Evaluate with grep -E, the engine that actually consumes this pattern.
+
+        Python's `re` does not implement POSIX classes like [[:space:]], so asserting with it
+        would test a pattern the shell never sees.
+        """
+        proc = subprocess.run(["grep", "-qEi", pattern], input=text, text=True, check=False)
+        return proc.returncode == 0
+
+    for name in export.MARKET_FIELD_NAMES:
+        assert grep_matches(f'"{name}": 1.0'), f"{name} not matched by the generated regex"
+    assert not grep_matches('"price_positive": 3')
+    assert not grep_matches('"ci_low": 0.9')
+
+    repo_root = export.REPO_ROOT
+    for rel in ("scripts/release_gate.sh", ".github/workflows/pages.yml"):
+        text = (repo_root / rel).read_text(encoding="utf-8")
+        assert "market_key_regex" in text, f"{rel} does not generate its pattern"
+        assert "price|open|high|low|close" not in text, f"{rel} still carries a hand-copied list"
 
 
 def test_missing_schema_is_fatal_not_permissive() -> None:

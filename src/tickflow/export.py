@@ -88,6 +88,19 @@ MARKET_FIELD_NAMES: frozenset[str] = frozenset(
 )
 
 
+def market_key_regex() -> str:
+    """A POSIX ERE matching a JSON *key* whose name is a market-data field.
+
+    The shell-level scans in `scripts/release_gate.sh` and `.github/workflows/pages.yml` are
+    independent third passes: they read raw bytes, so they can catch a market value smuggled in
+    as page text rather than as a structured field, which neither Python pass can see. But they
+    were each carrying a hand-copied literal of this list, and the copies had already drifted --
+    the workflow's was five names short. Both now generate their pattern from here, so the list
+    exists once. Two lists that drift is how the class of defect in ADR-006 starts.
+    """
+    return '"(' + "|".join(sorted(MARKET_FIELD_NAMES)) + ')"[[:space:]]*:'
+
+
 class MarketDataLeak(Exception):
     """A market-data-derived field reached a published artifact (§1 ToS, release-blocking)."""
 

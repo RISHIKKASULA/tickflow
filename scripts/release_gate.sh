@@ -76,26 +76,6 @@ fi
 # ---------------------------------------------------------------------------------------------
 # 2. Market-data-derived export.
 # ---------------------------------------------------------------------------------------------
-# Matched as JSON *keys* only. SLO invariant labels (price_positive, high_ge_low) and CI bounds
-# (ci_low, ci_high) are telemetry, not market data, and must not trip this -- see export.py.
-MARKET_KEY_RE='"(price|open|high|low|close|volume|vwap|mid|bid|ask|size|notional|ohlcv|bar_open|bar_close)"[[:space:]]*:'
-
-echo "[gate] scanning published artifacts for market-data fields..."
-if [ -d site ]; then
-  if hits=$(grep -rnEi "$MARKET_KEY_RE" site/ 2>/dev/null); then
-    echo "[gate] FAIL: market-data field in a published artifact (ToS §1):"
-    note "$hits"
-    fail=1
-  else
-    echo "[gate]   ok - site/ is telemetry-only"
-  fi
-else
-  echo "[gate]   skip - no site/ directory"
-fi
-
-# The programmatic check is the authority; the grep above is a second, independent pass that can
-# also catch a value smuggled in as page text rather than as a structured field.
-#
 # Interpreter resolution matters here. A bare `python` picks up whatever is first on PATH, which
 # on a developer machine is usually a system Python with none of this project's dependencies --
 # so the import fails, and the check reports a ToS violation that did not happen. Resolve an
@@ -114,9 +94,43 @@ find_python() {
   return 1
 }
 
+# Matched as JSON *keys* only. SLO invariant labels (price_positive, high_ge_low) and CI bounds
+# (ci_low, ci_high) are telemetry, not market data, and must not trip this -- see export.py.
+#
+# The pattern is generated from export.MARKET_FIELD_NAMES, never hand-copied: a second literal
+# list drifts silently from the first, which is the defect class ADR-006 exists to record.
+if PY=$(find_python); then
+  MARKET_KEY_RE=$("$PY" -c "import sys; sys.path.insert(0, 'src'); \
+from tickflow.export import market_key_regex; print(market_key_regex())")
+else
+  echo "[gate] ERROR: no interpreter available that can import tickflow."
+  note "Cannot generate the market-data key pattern, so the scan below did NOT run."
+  note "Blocking anyway: an unrun check is not a passed check."
+  fail=1
+  MARKET_KEY_RE=""
+fi
+
+echo "[gate] scanning published artifacts for market-data fields..."
+if [ -z "$MARKET_KEY_RE" ]; then
+  echo "[gate]   skip - pattern unavailable (already reported above)"
+elif [ -d site ]; then
+  if hits=$(grep -rnEi "$MARKET_KEY_RE" site/ 2>/dev/null); then
+    echo "[gate] FAIL: market-data field in a published artifact (ToS §1):"
+    note "$hits"
+    fail=1
+  else
+    echo "[gate]   ok - site/ is telemetry-only"
+  fi
+else
+  echo "[gate]   skip - no site/ directory"
+fi
+
+# The programmatic check is the authority; the grep above is a second, independent pass that can
+# also catch a value smuggled in as page text rather than as a structured field.
+#
 echo "[gate] re-running the programmatic telemetry-only assertion..."
 if [ -f site/telemetry.json ]; then
-  if PY=$(find_python); then
+  if [ -n "${PY:-}" ]; then
     if "$PY" -c "
 import json, sys
 sys.path.insert(0, 'src')

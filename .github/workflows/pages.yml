@@ -74,7 +74,10 @@ jobs:
           export.assert_telemetry_only(payload)
           print('telemetry-only: OK')
           "
-          if grep -nEi '"(price|open|high|low|close|volume|vwap|mid|bid|ask)"[[:space:]]*:' site/telemetry.json; then
+          # Generated from export.MARKET_FIELD_NAMES, never hand-copied. This literal had
+          # already drifted five names behind scripts/release_gate.sh; one list, one place.
+          MARKET_KEY_RE=$(uv run python -c "from tickflow.export import market_key_regex; print(market_key_regex())")
+          if grep -nEi "$MARKET_KEY_RE" site/telemetry.json; then
             echo "::error::market-data field in the published artifact (ToS §1)"
             exit 1
           fi

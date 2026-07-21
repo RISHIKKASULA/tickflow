@@ -19,3 +19,4 @@ htmlcov/
 
 # OS
 .DS_Store
+graphify-out/
