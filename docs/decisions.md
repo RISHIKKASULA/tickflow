@@ -291,3 +291,100 @@ deterministic — in exchange for no change in any published figure.
   currently exercised by nothing.
 - §9's workflow layout names `metrics.yml`; the function lives in a `metrics` job inside
   `ci.yml` plus `pages.yml`. Same work, different files.
+
+## ADR-006 — §8 shipped as a blocklist; the declared-field allowlist now exists
+
+**Status: ACCEPTED (2026-07-21).** Records that the frozen §8 enforcement was implemented
+inverted from Day D until this entry, what that let through, and what the fix does and does
+not prove.
+
+### What §8 required, and what shipped
+
+Frozen §8: "the exporter writes only fields declared in `telemetry_schema.json` ... A
+release-blocking test fails the build if an exported artifact contains **any undeclared
+field**." That is an allowlist. It is fail-closed: a field nobody anticipated is a leak.
+
+What shipped was `MARKET_FIELD_NAMES`, a fifteen-name blocklist in `export.py`, and
+`telemetry_schema.json` never existed — the filename appears nowhere in the repo except §8
+itself. A blocklist is fail-open: it rejects the names it knows and passes everything else.
+
+The two are not variations on a theme. They are opposite defaults, and the difference is the
+whole point of the clause.
+
+### What it let through
+
+Confirmed by probe against the committed artifact, before the fix:
+
+- `mid_px` at the top level: **passed**
+- `mid_px` nested under `grade`: **passed**
+- `last_trade` under `grade.per_class.duplicate`: **passed**
+- `price`, `volume` at either level: blocked (they are in the fifteen)
+
+So the boundary held for the exact names someone thought of in advance and was open for every
+name they did not. Traversal was never the weakness — `find_market_fields` walks dicts and
+lists to any depth correctly. The set it walks with was.
+
+Nothing exploited this. No published artifact ever contained an undeclared field, which is
+why the gap survived: the gate produced the right answer for the wrong reason on every run,
+and a gate that has never failed looks identical to a gate that cannot fail.
+
+`scripts/release_gate.sh` and `pages.yml`'s grep are independent scans over the built artifact
+and were subject to the same blind spot; they scan for the same fifteen names.
+
+### The change
+
+`contracts/telemetry_schema.json` declares every field path of a telemetry artifact — 138
+paths, enumerated from the committed one and approved field by field, with the repeated
+`Estimate` shape defined once and referenced at all six sites. `assert_telemetry_only` runs
+two independent passes:
+
+- **Pass 1 (primary, fail-closed):** every field path must be declared; types are enforced
+  (`int`/`float`/`str`/`bool`/`object`, with `bool` checked before `int` since Python's `bool`
+  is an `int` subclass); declared-but-missing fields and undeclared nulls are failures; an
+  unreadable or absent schema raises rather than degrading to allow-everything.
+- **Pass 2 (secondary, fail-open):** `MARKET_FIELD_NAMES`, unchanged.
+
+Both run on every export. Pass 2 is deliberately **not** folded into pass 1. They have
+different blind spots: pass 1 catches names nobody anticipated but cannot see a market value
+smuggled into a declared free-text string; pass 2 catches a known market name even if a future
+schema edit wrongly declares it. Collapsing them into one check would leave one of those
+uncovered.
+
+The schema location is `contracts/`, beside `rules.yaml` and `trades.v1.avsc`. §8 gives a bare
+filename and §9's layout does not list the file at all; this is the coherent placement, not a
+second deviation.
+
+### The enums are the mechanism, not friction
+
+`grade.per_class` declares exactly four keys (`malformed`, `out-of-range`, `out-of-order`,
+`duplicate`) and `counts_by_invariant` exactly seven. These are enums by choice.
+
+Adding a fifth fault class will therefore fail the gate until someone edits this schema. That
+is the intended behaviour and the entire value of the change. **The failure mode this ADR
+exists to prevent is a future maintainer hitting that rejection while adding a legitimate
+fault class, reading it as an obstacle, and "fixing" it by widening the enum to a wildcard.**
+A wildcard under `per_class` re-admits `per_class.mid_px`. That is precisely the hole
+described above, reopened, and it would again produce correct results on every run until the
+day it did not.
+
+Adding a field to a published artifact means editing this schema, deliberately, as part of the
+change that adds it. That edit is the review point. Removing the need for the edit removes the
+review.
+
+### What pass 1 does not prove
+
+Stated plainly so a reader does not infer more coverage than exists.
+
+**It checks field names, not values.** `grade.fixture`, the digests, and the provenance strings
+are declared free text. A market value placed inside one of those strings passes pass 1 (the
+path is declared) and passes pass 2 (the blocklist matches keys, not values). Pass 1 closes the
+undeclared-field fail-open case, which is what §8 requires and what the probes above exercised.
+It does not make the export boundary total. Value-scanning free text was considered and
+rejected: it false-positives on 64-character digests, and a check that cries wolf gets
+weakened, which is the failure mode this whole entry is about.
+
+**Declaring the provenance fields validates their presence and type, never their truth.** The
+committed artifact stamps `commit: 773b226a1aaa...`, a commit whose tree still defines
+`measure_throughput` and therefore cannot have produced it. That artifact passes this schema
+cleanly, and should — a schema is not a provenance check. Different defect, different fix; it
+is not addressed here and is not made less true by anything in this entry.

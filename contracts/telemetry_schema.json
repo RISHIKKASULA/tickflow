@@ -1,0 +1,144 @@
+{
+  "$comment": [
+    "Declared field paths for a published telemetry artifact (architecture.md §8, §1 ToS).",
+    "This file is the allowlist: export.py's Pass 1 raises MarketDataLeak on any field not",
+    "declared here. Adding a field to the artifact REQUIRES editing this file. That is the",
+    "mechanism, not an obstacle -- see ADR-006. Widening an enum to a wildcard to avoid an",
+    "edit reopens the fail-open hole this schema exists to close.",
+    "",
+    "Types: object | int | float | str | bool. A $ref names an entry in definitions.",
+    "'fields' is exhaustive: every key present in the artifact must appear, and no others."
+  ],
+
+  "definitions": {
+    "Estimate": {
+      "$comment": [
+        "A point proportion with its bootstrap 95% CI over n items (metrics.Estimate).",
+        "point/ci_low/ci_high are nullable: Estimate.as_dict() emits null for all three when",
+        "n == 0 or the point is NaN ('undefined'). n is always an int, including in that case."
+      ],
+      "type": "object",
+      "fields": {
+        "point": { "type": "float", "nullable": true },
+        "ci_low": { "type": "float", "nullable": true },
+        "ci_high": { "type": "float", "nullable": true },
+        "n": { "type": "int" }
+      }
+    },
+
+    "ClassMetrics": {
+      "$comment": "Per-fault-class recall + per-rule precision. One class maps 1:1 to one rule.",
+      "type": "object",
+      "fields": {
+        "fault_class": { "type": "str" },
+        "rule": { "type": "str" },
+        "n_faults": { "type": "int" },
+        "n_detected": { "type": "int" },
+        "n_designed_miss": { "type": "int" },
+        "n_precision_hits": { "type": "int" },
+        "n_quarantined_as_rule": { "type": "int" },
+        "precision": { "$ref": "Estimate" },
+        "recall": { "$ref": "Estimate" }
+      }
+    },
+
+    "InvariantCounts": {
+      "$comment": "The seven frozen SLO invariants from bars.check_slo. Counts only, never values.",
+      "type": "object",
+      "fields": {
+        "high_ge_low": { "type": "int" },
+        "open_in_range": { "type": "int" },
+        "close_in_range": { "type": "int" },
+        "volume_positive": { "type": "int" },
+        "price_positive": { "type": "int" },
+        "monotone_time": { "type": "int" },
+        "no_quarantinable": { "type": "int" }
+      }
+    },
+
+    "GatesResult": {
+      "$comment": "One arm of the gates-ON/OFF SLO experiment. Bar counts, never bar values.",
+      "type": "object",
+      "fields": {
+        "n_bars": { "type": "int" },
+        "n_violated_bars": { "type": "int" },
+        "n_violations": { "type": "int" },
+        "counts_by_invariant": { "$ref": "InvariantCounts" }
+      }
+    }
+  },
+
+  "root": {
+    "type": "object",
+    "fields": {
+      "grade": {
+        "type": "object",
+        "fields": {
+          "bootstrap_b": { "type": "int" },
+          "seed": { "type": "int" },
+          "n_total": { "type": "int" },
+          "n_controls": { "type": "int" },
+          "fixture": { "type": "str" },
+          "manifest_digest": { "type": "str" },
+          "completeness": {
+            "type": "object",
+            "fields": {
+              "n_total": { "type": "int" },
+              "n_valid": { "type": "int" },
+              "n_quarantine": { "type": "int" },
+              "loss": { "type": "int" },
+              "duplicate": { "type": "int" },
+              "ok": { "type": "bool" }
+            }
+          },
+          "false_quarantine_rate": {
+            "type": "object",
+            "fields": {
+              "all_controls": { "$ref": "Estimate" },
+              "near_boundary_controls": { "$ref": "Estimate" }
+            }
+          },
+          "per_class": {
+            "$comment": "Enum, not wildcard. A fifth fault class requires a deliberate edit here.",
+            "type": "object",
+            "fields": {
+              "malformed": { "$ref": "ClassMetrics" },
+              "out-of-range": { "$ref": "ClassMetrics" },
+              "out-of-order": { "$ref": "ClassMetrics" },
+              "duplicate": { "$ref": "ClassMetrics" }
+            }
+          }
+        }
+      },
+
+      "slo": {
+        "type": "object",
+        "fields": {
+          "n_frames": { "type": "int" },
+          "designed_miss_dups": { "type": "int" },
+          "bit_identical": { "type": "bool" },
+          "thesis_holds": { "type": "bool" },
+          "fixture": { "type": "str" },
+          "on_digest": { "type": "str" },
+          "reference_digest": { "type": "str" },
+          "gates_on": { "$ref": "GatesResult" },
+          "gates_off": { "$ref": "GatesResult" }
+        }
+      },
+
+      "provenance": {
+        "$comment": "Declaring these validates presence and type, never truth. See ADR-006.",
+        "type": "object",
+        "fields": {
+          "commit": { "type": "str" },
+          "generated_at": { "type": "str" },
+          "profile": { "type": "str" },
+          "runner": { "type": "str" },
+          "tickflow_version": { "type": "str" },
+          "fixture_content_sha256": { "type": "str" },
+          "fixture_parquet_sha256": { "type": "str" }
+        }
+      }
+    }
+  }
+}

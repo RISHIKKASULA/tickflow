@@ -107,8 +107,132 @@ def find_market_fields(payload: Any, path: str = "$") -> list[str]:
     return found
 
 
-def assert_telemetry_only(payload: Any) -> None:
-    """Raise `MarketDataLeak` if any market-data field name appears anywhere in `payload`."""
+# --------------------------------------------------------------------------------------------
+# Pass 1 — declared-field allowlist (§8, fail-closed).
+#
+# The blocklist below (MARKET_FIELD_NAMES, Pass 2) is fail-open by construction: it rejects the
+# fifteen names it knows and passes everything else, so `mid_px` or `last_trade` reached a
+# published artifact untouched at every nesting level. §8 has always required the opposite --
+# "the exporter writes only fields declared in telemetry_schema.json" -- which is fail-closed:
+# an undeclared field is a leak whether or not anyone predicted its name. ADR-006 records how
+# long the two diverged.
+#
+# The two passes stay separate on purpose. They fail differently: Pass 1 catches names nobody
+# anticipated but is blind to a market value smuggled into a *declared* free-text string; Pass 2
+# catches a known market name even if a future schema edit wrongly declares it. Folding either
+# into the other would leave one of those blind spots uncovered.
+# --------------------------------------------------------------------------------------------
+SCHEMA_PATH = REPO_ROOT / "contracts" / "telemetry_schema.json"
+
+_TYPES: dict[str, type | tuple[type, ...]] = {
+    "int": int,
+    "float": float,
+    "str": str,
+    "bool": bool,
+    "object": dict,
+}
+
+
+def load_telemetry_schema(path: Path | None = None) -> dict[str, Any]:
+    """Load the declared-field schema. Missing or unreadable is fatal: the gate must not
+    degrade to 'allow everything' when its allowlist goes away."""
+    p = path or SCHEMA_PATH
+    try:
+        schema: dict[str, Any] = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise MarketDataLeak(f"telemetry schema unreadable at {p} (§8): {exc}") from exc
+    if "root" not in schema:
+        raise MarketDataLeak(f"telemetry schema at {p} has no 'root' (§8)")
+    return schema
+
+
+def _resolve(node: dict[str, Any], definitions: dict[str, Any]) -> dict[str, Any]:
+    seen: set[str] = set()
+    while "$ref" in node:
+        ref = node["$ref"]
+        if ref in seen:
+            raise MarketDataLeak(f"cyclic $ref in telemetry schema: {ref}")
+        seen.add(ref)
+        if ref not in definitions:
+            raise MarketDataLeak(f"telemetry schema $ref not found: {ref}")
+        node = definitions[ref]
+    return node
+
+
+def find_undeclared_fields(
+    payload: Any, schema: dict[str, Any] | None = None, path: str = "$"
+) -> list[str]:
+    """Every path in `payload` that the schema does not declare, or declares at another type.
+
+    Returns human-readable problems, not just names, so a failure says what to fix.
+    """
+    doc = schema if schema is not None else load_telemetry_schema()
+    definitions: dict[str, Any] = doc.get("definitions", {})
+    problems: list[str] = []
+
+    def walk(value: Any, node: dict[str, Any], here: str) -> None:
+        node = _resolve(node, definitions)
+        declared_type = node.get("type")
+
+        if declared_type == "object":
+            if not isinstance(value, dict):
+                problems.append(f"{here}: expected object, got {type(value).__name__}")
+                return
+            fields: dict[str, Any] = node.get("fields", {})
+            for key, sub in value.items():
+                child = f"{here}.{key}"
+                if key not in fields:
+                    problems.append(f"{child}: undeclared field")
+                    continue
+                walk(sub, fields[key], child)
+            for key in fields:
+                if key not in value:
+                    problems.append(f"{here}.{key}: declared but missing")
+            return
+
+        if value is None:
+            # Nullable is opt-in per field. metrics.Estimate emits null for point/ci_low/ci_high
+            # when n == 0; a strict type there would reject a legitimate artifact.
+            if not node.get("nullable", False):
+                problems.append(f"{here}: null, but not declared nullable")
+            return
+
+        expected = _TYPES.get(declared_type or "")
+        if expected is None:
+            problems.append(f"{here}: schema declares unknown type {declared_type!r}")
+            return
+        # bool is a subclass of int in Python; check it before the numeric types so a bool
+        # cannot satisfy an int declaration or vice versa.
+        if declared_type == "bool":
+            ok = isinstance(value, bool)
+        elif declared_type == "int":
+            ok = isinstance(value, int) and not isinstance(value, bool)
+        elif declared_type == "float":
+            ok = isinstance(value, float)
+        else:
+            ok = isinstance(value, expected)
+        if not ok:
+            problems.append(f"{here}: expected {declared_type}, got {type(value).__name__}")
+
+    walk(payload, doc["root"], path)
+    return problems
+
+
+def assert_telemetry_only(payload: Any, schema: dict[str, Any] | None = None) -> None:
+    """Raise `MarketDataLeak` unless `payload` passes both export gates.
+
+    Pass 1 (primary, fail-closed): every field is declared in `telemetry_schema.json`.
+    Pass 2 (secondary, fail-open):  no exact market-data field name appears anywhere.
+
+    Both run; both raise. Neither is derived from the other -- see the block comment above.
+    """
+    undeclared = find_undeclared_fields(payload, schema)
+    if undeclared:
+        raise MarketDataLeak(
+            "undeclared field(s) in a published artifact (§8, ToS §1): "
+            + ", ".join(sorted(undeclared))
+        )
+
     leaks = find_market_fields(payload)
     if leaks:
         raise MarketDataLeak(

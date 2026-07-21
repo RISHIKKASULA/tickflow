@@ -200,7 +200,20 @@ rule, gates-ON/OFF SLO comparison, live-soak section (labeled), last-refreshed t
 `telemetry_schema.json` (counts, rates, latencies, verdicts, timestamps — no price, open,
 high, low, close, volume, vwap, or any market-data-derived value). A release-blocking test
 fails the build if an exported artifact contains any undeclared field. This is a ToS
-requirement (§1), not a style choice — README says why. No JS frameworks; plain HTML/CSS +
+requirement (§1), not a style choice — README says why.
+
+*Implementation (ADR-006):* the allowlist lives at `contracts/telemetry_schema.json`, beside
+the other two contracts; §9's layout predates it. `export.assert_telemetry_only` runs two
+independent passes and both raise `MarketDataLeak`. **Pass 1 (primary, fail-closed)** rejects
+any field path the schema does not declare, plus type drift, missing declared fields, and
+undeclared nulls; a missing or unreadable schema is fatal rather than permissive. **Pass 2
+(secondary, fail-open)** keeps the `MARKET_FIELD_NAMES` exact-name blocklist, which still
+catches a known market name if a future schema edit wrongly declares one. They are kept
+separate because they fail differently; neither is derived from the other. The `per_class`
+and `counts_by_invariant` key sets are enums, so a fifth fault class or an eighth invariant
+requires a deliberate schema edit. ADR-006 records that §8 shipped as the blocklist alone from
+Day D until 2026-07-21, what that let through, and the limits of what pass 1 does and does not
+prove. No JS frameworks; plain HTML/CSS +
 one committed JSON. (DuckDB-WASM is a deepening option, not v0.1.)
 
 ## 9. Repo scaffold & quality tooling (frozen)
