@@ -119,9 +119,16 @@ gate routes exactly this set to `trades.valid`, so the claim becomes precise and
   are the frozen point that keeps recall informative, not a number to launder away.
 
 The SLO thesis itself is unaffected and is measured over the **full** faulted stream (designed
-misses included, because they are real uncatchable duplicates): gates ON → zero SLO violations;
-gates OFF → `K > 0` violated bars, dominated by the `no_quarantinable` invariant plus corrupted
-extremes. That ON/OFF table is the README's opening evidence and stands exactly as §4 intends.
+misses included, because they are real uncatchable duplicates). Measured on the committed fixture
+(100,477 frames, seed 42, LRU 10,000; `tickflow slo`): gates ON → **0 of 15,061 bars violated**;
+gates OFF → **1,076 of 15,061**, dominated by the `no_quarantinable` invariant (1,076) plus
+corrupted extremes (`price_positive`, 144). On the 4 × 300 small config with LRU 100 — the scale
+the "22 of 189" figure above comes from — the same experiment gives 0 vs **12 of 189**
+(`no_quarantinable` 12, `price_positive` 3). The two scales are not comparable, so every figure
+is labeled with the fixture that produced it. Per-invariant counts sum past the violated-bar count
+because one bar can trip several invariants at once (1,076 + 144 = 1,220 violations spread over
+1,076 distinct bars); the bar count is the headline, the invariant counts are the diagnosis.
+That ON/OFF table is the README's opening evidence and stands exactly as §4 intends.
 
 ### Consequences
 

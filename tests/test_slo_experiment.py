@@ -6,8 +6,11 @@ fault injector:
 - **Gates ON hold the SLO.** Replaying the fault-injected fixture with the gate on yields bars with
   zero SLO violations — every quarantine-worthy frame was removed before it could reach a bar.
 - **Gates OFF break the SLO.** The same fixture with everything routed valid drops the faults into
-  the bars; the SLO checker counts `K > 0` violated bars, dominated by the load-bearing
-  `no_quarantinable` invariant (plus corrupted extremes from out-of-range faults).
+  the bars and the SLO checker counts violated bars, dominated by the load-bearing
+  `no_quarantinable` invariant (plus corrupted extremes from out-of-range faults). The exact
+  counts are fixture-scale and belong to the artifact `tickflow slo` regenerates, not to a test
+  constant: 0 vs 1,076 of 15,061 bars on the committed fixture, 0 vs 12 of 189 on the 4 x 300
+  small config used below. These tests assert the shape of the result, never the magnitude.
 - **Bit-identity on the catchable subset.** With the designed-miss duplicates filtered out, the
   gate's gates-ON bars are bit-identical to the manifest's ground-truth valid projection.
 - **Designed misses are reported, not hidden.** The dups past the LRU window (`detectable=False`)

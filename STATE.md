@@ -84,8 +84,14 @@ metrics workflow and Pages dashboard` · live soak · `test: complete coverage t
   integration-lane. **bars.py 100% covered.**
 - [x] Day C commit 2: gates-off demo mode + SLO comparison — `run_slo_experiment` in `bars.py` +
   the first-class `--gates-off` flag on `tickflow gate`. Replaying the fault-injected fixture twice:
-  **gates ON → 0 SLO violations; gates OFF → K > 0 violated bars** (dominated by `no_quarantinable`
-  plus corrupted extremes) — the thesis made visible. Bit-identity is checked on the **catchable**
+  **gates ON → 0 of 15,061 bars violated; gates OFF → 1,076 of 15,061** on the committed fixture
+  (100,477 frames, seed 42, LRU 10,000; `tickflow slo`), dominated by `no_quarantinable` (1,076)
+  plus corrupted extremes (`price_positive`, 144) — the thesis made visible. On the 4 × 300
+  small config with LRU 100 the same experiment gives 0 vs **12 of 189** (`no_quarantinable` 12,
+  `price_positive` 3); the two scales are not comparable and are always labeled. Per-invariant
+  counts can exceed the violated-bar count — one bar can trip several invariants at once — so
+  1,076 + 144 = 1,220 violations across 1,076 distinct bars is consistent, not contradictory.
+  Bit-identity is checked on the **catchable**
   fault subset (designed-miss dups filtered out) against the manifest's ground-truth **valid
   projection**; designed misses are surfaced as `designed_miss_dups` (R3 recall gap), not hidden.
   **ADR-002** records why the reference is the valid projection, not the raw clean fixture (the
@@ -163,8 +169,11 @@ Day C turned the gate into measured evidence (frozen §4/§6). The whole toolcha
    watermark, order-independent so replay is bit-identical), `check_slo` (the frozen invariants,
    including "no bar built from a quarantine-worthy message"), `DuckDbSink` (append-only, single
    writer, local-only bar values).
-2. **Commit 2 — DONE.** `run_slo_experiment` + `--gates-off`: gates ON → 0 SLO violations, gates
-   OFF → K > 0 violated bars. Bit-identity checked on the catchable subset vs the ground-truth
+2. **Commit 2 — DONE.** `run_slo_experiment` + `--gates-off`: on the committed fixture (100,477
+   frames, seed 42, LRU 10,000) gates ON → **0 of 15,061 bars violated**, gates OFF → **1,076 of
+   15,061** (`no_quarantinable` 1,076, `price_positive` 144 — 1,220 violations over 1,076 bars,
+   because one bar can trip several invariants). Regenerate with `tickflow slo`.
+   Bit-identity checked on the catchable subset vs the ground-truth
    **valid projection**; designed misses surfaced as the R3 recall gap. **ADR-002** records the
    reference clarification (valid projection, not the raw clean fixture — the injector replaces in
    place and its boundary controls alter values by design).

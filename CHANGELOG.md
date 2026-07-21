@@ -44,8 +44,10 @@ All notable changes to this project are documented here. The format follows
   `tickflow bars` runs the consumer (integration lane).
 - Gates-off demo mode with the signature SLO comparison (`run_slo_experiment` in `bars.py`, the
   first-class `--gates-off` flag on `tickflow gate`): replay the fault-injected fixture through the
-  real gate twice. Gates ON → zero SLO violations; gates OFF → K > 0 violated bars (dominated by
-  the `no_quarantinable` invariant plus corrupted extremes) — the thesis made visible. Bit-identity
+  real gate twice. Gates ON → 0 of 15,061 bars violated; gates OFF → 1,076 of 15,061 on the
+  committed fixture (100,477 frames, seed 42, LRU 10,000; regenerate with `tickflow slo`),
+  dominated by the `no_quarantinable` invariant (1,076) plus corrupted extremes
+  (`price_positive`, 144) — the thesis made visible. Bit-identity
   is checked on the catchable fault subset (designed-miss dups filtered out) against the manifest's
   ground-truth valid projection; the designed misses are surfaced as the R3 recall gap, not hidden.
   ADR-002 records why the reference is the valid projection, not the raw clean fixture (the injector
