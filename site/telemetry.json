@@ -1,0 +1,171 @@
+{
+  "grade": {
+    "bootstrap_b": 10000,
+    "completeness": {
+      "duplicate": 0,
+      "loss": 0,
+      "n_quarantine": 1601,
+      "n_total": 100477,
+      "n_valid": 98876,
+      "ok": true
+    },
+    "false_quarantine_rate": {
+      "all_controls": {
+        "ci_high": 0.0,
+        "ci_low": 0.0,
+        "n": 98800,
+        "point": 0.0
+      },
+      "near_boundary_controls": {
+        "ci_high": 0.0,
+        "ci_low": 0.0,
+        "n": 460,
+        "point": 0.0
+      }
+    },
+    "fixture": "committed trades.v1.clean.parquet: 100,477 frames, seed 42, LRU 10,000, tolerance 5000 ms",
+    "manifest_digest": "15db5bc09f00df6219fb12c8411371979f093cc5f7e8594672a9faf82bf9f011",
+    "n_controls": 98800,
+    "n_total": 100477,
+    "per_class": {
+      "duplicate": {
+        "fault_class": "duplicate",
+        "n_designed_miss": 76,
+        "n_detected": 401,
+        "n_faults": 477,
+        "n_precision_hits": 401,
+        "n_quarantined_as_rule": 401,
+        "precision": {
+          "ci_high": 1.0,
+          "ci_low": 1.0,
+          "n": 401,
+          "point": 1.0
+        },
+        "recall": {
+          "ci_high": 0.872117,
+          "ci_low": 0.807128,
+          "n": 477,
+          "point": 0.840671
+        },
+        "rule": "R3"
+      },
+      "malformed": {
+        "fault_class": "malformed",
+        "n_designed_miss": 0,
+        "n_detected": 400,
+        "n_faults": 400,
+        "n_precision_hits": 400,
+        "n_quarantined_as_rule": 400,
+        "precision": {
+          "ci_high": 1.0,
+          "ci_low": 1.0,
+          "n": 400,
+          "point": 1.0
+        },
+        "recall": {
+          "ci_high": 1.0,
+          "ci_low": 1.0,
+          "n": 400,
+          "point": 1.0
+        },
+        "rule": "R1"
+      },
+      "out-of-order": {
+        "fault_class": "out-of-order",
+        "n_designed_miss": 0,
+        "n_detected": 400,
+        "n_faults": 400,
+        "n_precision_hits": 400,
+        "n_quarantined_as_rule": 400,
+        "precision": {
+          "ci_high": 1.0,
+          "ci_low": 1.0,
+          "n": 400,
+          "point": 1.0
+        },
+        "recall": {
+          "ci_high": 1.0,
+          "ci_low": 1.0,
+          "n": 400,
+          "point": 1.0
+        },
+        "rule": "R4"
+      },
+      "out-of-range": {
+        "fault_class": "out-of-range",
+        "n_designed_miss": 0,
+        "n_detected": 400,
+        "n_faults": 400,
+        "n_precision_hits": 400,
+        "n_quarantined_as_rule": 400,
+        "precision": {
+          "ci_high": 1.0,
+          "ci_low": 1.0,
+          "n": 400,
+          "point": 1.0
+        },
+        "recall": {
+          "ci_high": 1.0,
+          "ci_low": 1.0,
+          "n": 400,
+          "point": 1.0
+        },
+        "rule": "R2"
+      }
+    },
+    "seed": 42
+  },
+  "provenance": {
+    "commit": "322393d4eb7f13befba6e3d428b225d2871310bc",
+    "fixture_content_sha256": "942bd683dd7b5433efdb2c3ee1b36060c8c7b944ed1e2f10f365cf40ed1873a6",
+    "fixture_parquet_sha256": "ae3cf8b5be1f5c2e9adf4faac27a560853ae3f2e3b3d803b148eee98d06fd4fe",
+    "generated_at": "2026-07-21T06:00:13Z",
+    "profile": "in-process (no broker)",
+    "runner": "Darwin arm64, Python 3.12.13",
+    "tickflow_version": "0.1.0.dev0"
+  },
+  "slo": {
+    "bit_identical": true,
+    "designed_miss_dups": 76,
+    "fixture": "committed trades.v1.clean.parquet: 100,477 frames, seed 42, LRU 10,000, tolerance 5000 ms",
+    "gates_off": {
+      "counts_by_invariant": {
+        "close_in_range": 0,
+        "high_ge_low": 0,
+        "monotone_time": 0,
+        "no_quarantinable": 1076,
+        "open_in_range": 0,
+        "price_positive": 144,
+        "volume_positive": 0
+      },
+      "n_bars": 15061,
+      "n_violated_bars": 1076,
+      "n_violations": 1220
+    },
+    "gates_on": {
+      "counts_by_invariant": {
+        "close_in_range": 0,
+        "high_ge_low": 0,
+        "monotone_time": 0,
+        "no_quarantinable": 0,
+        "open_in_range": 0,
+        "price_positive": 0,
+        "volume_positive": 0
+      },
+      "n_bars": 15061,
+      "n_violated_bars": 0,
+      "n_violations": 0
+    },
+    "n_frames": 100477,
+    "on_digest": "c353ffdbad09836a8e341299dd81a12447b57cd41b74d542e1a3280af6e24471",
+    "reference_digest": "c353ffdbad09836a8e341299dd81a12447b57cd41b74d542e1a3280af6e24471",
+    "thesis_holds": true
+  },
+  "throughput": {
+    "elapsed_s": 0.431,
+    "msgs_per_s": 233101.7,
+    "n_frames": 100477,
+    "runner": "Darwin arm64, Python 3.12.13",
+    "scope": "in-process rule engine only; no broker, network, or fsync cost included"
+  }
+}
