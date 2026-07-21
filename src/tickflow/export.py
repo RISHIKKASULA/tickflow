@@ -18,9 +18,16 @@ fails at 2am on release day:
   worse, would train whoever hit it to weaken the check. An exact-name rule stays sharp.
 
 **What the dashboard renders.** Detection precision/recall per fault class with CIs, the
-false-quarantine rate over both denominators, the gates-ON/OFF SLO comparison, completeness, and
-gate throughput. No chart of prices. No table of bars. No OHLCV value anywhere, because none ever
-enters the artifact this page is rendered from.
+false-quarantine rate over both denominators, the gates-ON/OFF SLO comparison, and completeness.
+No performance figure and no latency claim -- see below. No chart of prices. No table of bars.
+No OHLCV value anywhere, because none ever enters the artifact this page is rendered from.
+
+**Why there is no throughput number.** An earlier version published in-process rule-engine
+throughput. It was removed rather than caveated: it varied more than 3x between a laptop and a
+CI runner, and 1.6x between two runs on the same CI runner class, so it measured the machine
+rather than the gate. A figure whose spread exceeds any difference it could reveal is not a
+measurement, and no caveat makes it one. Nothing replaced it -- this project's claims are about
+correctness, and it does not need a performance number to make them.
 
 **The refresh line.** The page says "last refreshed <timestamp>" and never "updated daily". The
 Actions cron that regenerates it is best-effort — GitHub explicitly does not guarantee scheduled
@@ -41,14 +48,12 @@ import html
 import json
 import platform
 import subprocess
-import time
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from tickflow import __version__, bars, contracts, fixture, metrics
-from tickflow.gate import evaluate_all, load_rules_config
+from tickflow.gate import load_rules_config
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SITE_DIR = REPO_ROOT / "site"
@@ -153,43 +158,6 @@ def provenance(profile: str, generated_at: str | None = None) -> dict[str, Any]:
 
 
 # --------------------------------------------------------------------------------------------
-# Gate throughput — a pipeline measurement, not a market one.
-# --------------------------------------------------------------------------------------------
-@dataclass(frozen=True, slots=True)
-class Throughput:
-    """In-process rule-engine throughput over the committed fixture.
-
-    Deliberately narrow: this times `evaluate_all` over already-decoded wire frames in one process.
-    It is **not** end-to-end pipeline throughput and carries no broker, network, or fsync cost, so
-    it must never be quoted as a system capacity figure. It answers one question — is the rules
-    engine fast enough that gating is not the bottleneck — and the dashboard labels it as such.
-    """
-
-    n_frames: int
-    elapsed_s: float
-    msgs_per_s: float
-    runner: str
-
-    def as_dict(self) -> dict[str, Any]:
-        return {
-            "n_frames": self.n_frames,
-            "elapsed_s": round(self.elapsed_s, 4),
-            "msgs_per_s": round(self.msgs_per_s, 1),
-            "runner": self.runner,
-            "scope": "in-process rule engine only; no broker, network, or fsync cost included",
-        }
-
-
-def measure_throughput(frames: list[bytes], config: Any, schema: Any) -> Throughput:
-    """Time the real `RulesEngine` over `frames` (single pass, single process)."""
-    start = time.perf_counter()
-    evaluate_all(config, schema, frames)
-    elapsed = time.perf_counter() - start
-    rate = len(frames) / elapsed if elapsed > 0 else 0.0
-    return Throughput(len(frames), elapsed, rate, runner_spec())
-
-
-# --------------------------------------------------------------------------------------------
 # The artifact.
 # --------------------------------------------------------------------------------------------
 def build_telemetry(
@@ -209,15 +177,10 @@ def build_telemetry(
     grade_report = metrics.grade_committed_fixture(config=config, schema=schema, b=b, seed=seed)
     comparison = bars.run_committed_fixture_experiment(config=config, schema=schema, seed=seed)
 
-    clean = metrics._regroup(fixture.read_parquet(fixture.FIXTURE_PARQUET))
-    injected = fixture.inject_faults(clean, config, schema, seed=seed)
-    throughput = measure_throughput(injected.frames, config, schema)
-
     payload = {
         "provenance": provenance(profile, generated_at),
         "grade": grade_report.as_dict(),
         "slo": comparison.as_dict(),
-        "throughput": throughput.as_dict(),
     }
     assert_telemetry_only(payload)
     return payload
@@ -274,7 +237,6 @@ def render_html(payload: dict[str, Any]) -> str:
     prov = payload["provenance"]
     grade = payload["grade"]
     slo = payload["slo"]
-    tput = payload["throughput"]
     esc = html.escape
 
     rows = []
@@ -383,7 +345,7 @@ diagnosis. Bit-identity on the catchable subset:
 {slo["designed_miss_dups"]} designed-miss duplicates excluded and reported instead of
 hidden.</p></section>
 
-<h2>Completeness and gate throughput</h2>
+<h2>Completeness</h2>
 <section><div class="scroll"><table>
 <tr><th>Measure</th><th>Value</th></tr>
 <tr><td>Frames accounted for</td><td class="num">{comp["n_total"]:,}</td></tr>
@@ -392,12 +354,12 @@ hidden.</p></section>
 <tr><td>Loss / duplicate delivery</td>
 <td class="num">{comp["loss"]} / {comp["duplicate"]}</td></tr>
 <tr><td>Accounting</td><td>{verdict(bool(comp["ok"]))}</td></tr>
-<tr><td>Gate throughput</td><td class="num">{tput["msgs_per_s"]:,.0f} msg/s</td></tr>
 </table></div>
-<p class="note">Throughput is <strong>{esc(tput["scope"])}</strong>, measured on
-{esc(tput["runner"])} over {tput["n_frames"]:,} frames in {tput["elapsed_s"]:.2f}s. It is not a
-system capacity figure and is not independently reproducible. No latency claim is made anywhere:
-the local broker profile bypasses fsync, so latency measured against it would be meaningless.</p>
+<p class="note">Every input frame is accounted for exactly once across valid and quarantine.
+No performance figure is published: the only one this pipeline could measure in-process varied
+by more than 3x across machines and by 1.6x between two runs on the same CI runner class, so it
+described the runner rather than the gate. No latency claim is made either &mdash; the local
+broker profile bypasses fsync, which would make any latency measured against it meaningless.</p>
 </section>
 
 <footer>

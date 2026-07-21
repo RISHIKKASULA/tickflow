@@ -116,10 +116,10 @@
     "seed": 42
   },
   "provenance": {
-    "commit": "e5e6dc4b1e6b0eb9928cae5429e42af3886a9349",
+    "commit": "773b226a1aaa27d46329b1261b0e51ccb1f1c4e1",
     "fixture_content_sha256": "942bd683dd7b5433efdb2c3ee1b36060c8c7b944ed1e2f10f365cf40ed1873a6",
     "fixture_parquet_sha256": "ae3cf8b5be1f5c2e9adf4faac27a560853ae3f2e3b3d803b148eee98d06fd4fe",
-    "generated_at": "2026-07-21T06:06:51Z",
+    "generated_at": "2026-07-21T07:39:07Z",
     "profile": "in-process (no broker)",
     "runner": "Darwin arm64, Python 3.12.13",
     "tickflow_version": "0.9.0"
@@ -160,12 +160,5 @@
     "on_digest": "c353ffdbad09836a8e341299dd81a12447b57cd41b74d542e1a3280af6e24471",
     "reference_digest": "c353ffdbad09836a8e341299dd81a12447b57cd41b74d542e1a3280af6e24471",
     "thesis_holds": true
-  },
-  "throughput": {
-    "elapsed_s": 0.4367,
-    "msgs_per_s": 230100.3,
-    "n_frames": 100477,
-    "runner": "Darwin arm64, Python 3.12.13",
-    "scope": "in-process rule engine only; no broker, network, or fsync cost included"
   }
 }

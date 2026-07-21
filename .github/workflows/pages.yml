@@ -1,8 +1,10 @@
 # Regenerate the telemetry dashboard and deploy it to GitHub Pages (frozen §7/§8).
 #
 # What this publishes: PIPELINE TELEMETRY ONLY. Detection precision/recall with CIs, the
-# false-quarantine rate over both denominators, the gates-ON/OFF SLO comparison, completeness, and
-# gate throughput. It publishes NO market data — no prices, no derived market values, no OHLCV bar
+# false-quarantine rate over both denominators, the gates-ON/OFF SLO comparison, and completeness.
+# No performance figure of any kind -- the in-process throughput this once published varied 3x
+# across machines and 1.6x between runs on the same runner class, so it was removed rather than
+# caveated. It publishes NO market data — no prices, no derived market values, no OHLCV bar
 # values — anywhere on the page or in telemetry.json. That is a release-blocking constraint
 # (Coinbase/Kraken ToS, §1) and it is enforced mechanically inside `tickflow export`, which raises
 # MarketDataLeak and fails this job rather than deploying. The verify step below re-asserts it on
@@ -13,7 +15,7 @@
 # <timestamp>" and never claims a refresh cadence.
 #
 # Everything here runs in-process against the committed, checksum-pinned fixture. No broker is
-# started, so no latency or throughput figure on this page depends on one.
+# started -- and no performance figure is published at all, so nothing on this page could.
 
 name: pages
 

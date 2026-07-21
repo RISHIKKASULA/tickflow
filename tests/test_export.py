@@ -98,16 +98,6 @@ def test_provenance_refuses_to_emit_a_blank_pin(monkeypatch: Any) -> None:
 
 
 # --------------------------------------------------------------------------------------------
-# Throughput.
-# --------------------------------------------------------------------------------------------
-def test_throughput_labels_its_own_narrow_scope() -> None:
-    payload = export.Throughput(100, 0.5, 200.0, "test-runner").as_dict()
-    assert payload["msgs_per_s"] == 200.0
-    assert "no broker" in payload["scope"]
-    export.assert_telemetry_only(payload)
-
-
-# --------------------------------------------------------------------------------------------
 # Rendering.
 # --------------------------------------------------------------------------------------------
 def _payload() -> dict[str, Any]:
@@ -161,13 +151,6 @@ def _payload() -> dict[str, Any]:
             },
             "bit_identical": True,
             "designed_miss_dups": 4,
-        },
-        "throughput": {
-            "n_frames": 10,
-            "elapsed_s": 0.1,
-            "msgs_per_s": 100.0,
-            "runner": "Darwin arm64",
-            "scope": "in-process rule engine only",
         },
     }
 
@@ -225,11 +208,53 @@ def test_write_site_emits_both_artifacts(tmp_path: Path) -> None:
 def test_build_telemetry_is_telemetry_only_end_to_end() -> None:
     payload = export.build_telemetry(b=200)
     export.assert_telemetry_only(payload)  # already asserted inside; re-checked as the contract
-    assert set(payload) == {"provenance", "grade", "slo", "throughput"}
+    assert set(payload) == {"provenance", "grade", "slo"}
     assert payload["grade"]["n_total"] == 100_477
     assert payload["slo"]["thesis_holds"]
-    assert payload["throughput"]["msgs_per_s"] > 0
     # Both denominators survive the round trip into the published artifact.
     fq = payload["grade"]["false_quarantine_rate"]
     assert fq["all_controls"]["n"] == 98_800
     assert fq["near_boundary_controls"]["n"] == 460
+
+
+def test_no_performance_figure_is_published() -> None:
+    """No throughput/latency number in the artifact or on the page (deliberate removal).
+
+    An earlier version published in-process rule-engine throughput. It varied more than 3x
+    between a laptop and a CI runner and 1.6x between two runs on the same CI runner class, so it
+    described the machine rather than the gate, and it was removed rather than caveated. Asserted
+    here so it cannot drift back in unnoticed -- and so the next person to add one has to delete
+    a test that says why, rather than merely filling an empty-looking field.
+    """
+    payload = export.build_telemetry(b=200)
+    assert set(payload) == {"provenance", "grade", "slo"}
+
+    perf_keys = {
+        "throughput",
+        "msgs_per_s",
+        "elapsed_s",
+        "latency",
+        "latency_ms",
+        "p50",
+        "p95",
+        "p99",
+    }
+    assert export.find_market_fields(payload) == []  # the ToS rule still holds independently
+    found = set()
+
+    def walk(node: object) -> None:
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if key in perf_keys:
+                    found.add(key)
+                walk(value)
+        elif isinstance(node, list):
+            for item in node:
+                walk(item)
+
+    walk(payload)
+    assert found == set(), f"performance figure(s) back in the artifact: {sorted(found)}"
+
+    page = export.render_html(_payload())
+    assert "msg/s" not in page
+    assert "throughput" not in page.lower().split("</style>")[1] or "no throughput" in page.lower()

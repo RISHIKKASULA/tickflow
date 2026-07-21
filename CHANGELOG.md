@@ -6,6 +6,17 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Removed
+- The in-process gate throughput figure, everywhere it appeared: `Throughput`,
+  `measure_throughput`, the `throughput` key in `site/telemetry.json`, the dashboard row and
+  caption, the README table row, and the tests asserting on it. Measured, it came out at
+  ~230,000 msg/s on Apple silicon, 124,819 on one CI runner, and 76,071 on another -- more than
+  3x across machines and 1.6x between two runs on the same CI runner class. A number whose
+  spread exceeds any difference it could reveal describes the runner, not the gate, so it was
+  removed rather than caveated. **Nothing replaced it**; tickflow makes no performance claim.
+  Side effect: with the only wall-clock value gone, the telemetry artifact is now fully
+  deterministic apart from its provenance stamps, and CI asserts that.
+
 ## [0.9.0] - 2026-07-20
 
 Stated v0.9, not v0.1.0: the quarantine-inspection/replay CLI and the live soak were cut via the

@@ -308,8 +308,7 @@ ruff, mypy strict, **181 tests, core coverage 100%** (export.py added at 100%).
 6. **`docs: write README with measured results` — DONE.** Every number traced to
    `site/telemetry.json` with its JSON path, and cross-checked against the artifact
    programmatically (0 mismatches). Leads with gates ON/OFF, reads its own perfect-recall rows
-   skeptically, quotes throughput to one significant figure because it drifts 214k–225k msg/s run
-   to run. Limitations state all four required items — dev-mode bypasses fsync so **no latency
+   skeptically, and publishes **no performance figure at all** (see below). Limitations state all four required items — dev-mode bypasses fsync so **no latency
    claim is made anywhere**; fixtures are synthetic and no captured real data is ever committed;
    designed-miss dups pull R3 recall below 100% by construction; SLO numbers are fixture-scale,
    not live-traffic — plus single-node, at-least-once, `double` not decimal, and best-effort

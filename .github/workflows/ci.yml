@@ -76,9 +76,9 @@ jobs:
       - name: Release gate
         run: uv run bash scripts/release_gate.sh
       # The committed site/ is what the README links to, so it must not silently drift from what
-      # the code produces. Compared excluding throughput (wall-clock, nondeterministic by nature)
-      # and the timestamp/commit stamps; every measured quality number is deterministic and must
-      # match exactly.
+      # the code produces. Now that the wall-clock throughput figure is gone, every remaining
+      # number is deterministic: only the provenance stamps (timestamp, commit, runner, profile)
+      # legitimately differ between runs, so everything else must match exactly.
       - name: Check the committed artifact has not drifted
         run: |
           uv run python -c "
@@ -88,7 +88,6 @@ jobs:
               subprocess.run(['git','show','HEAD:site/telemetry.json'],
                              capture_output=True, text=True, check=True).stdout)
           for d in (fresh, committed):
-              d.pop('throughput', None)
               d['provenance'].pop('generated_at', None)
               d['provenance'].pop('commit', None)
               d['provenance'].pop('profile', None)
