@@ -268,7 +268,7 @@ measurement work wins the session and the CLI slips to the roadmap.
 ## Day D — COMPLETE. Released v0.9.
 
 Day D published the evidence and shipped (frozen §7/§8/§11/§14). Toolchain green throughout:
-ruff, mypy strict, **181 tests, core coverage 100%** (export.py added at 100%).
+ruff, mypy strict, **194 tests, core coverage 99.4% (7 uncovered: export.py schema-error paths from the allowlist commit)** (export.py added at 100%).
 
 1. **`feat: add a CLI surface for the gates-ON/OFF SLO experiment` — DONE.** The §4 signature
    result had no command that produced it: `run_slo_experiment` was reachable only as a library
